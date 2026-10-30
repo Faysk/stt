@@ -27,8 +27,12 @@ def main():
         cli = root / 'node_modules' / 'wrangler' / 'bin' / 'wrangler.js'
         if not cli.is_file():
             raise RuntimeError('Wrangler not installed: run npm ci')
+        env = os.environ.copy()
+        cloudflared = getenv('STT_CLOUDFLARED', '')
+        if cloudflared and Path(cloudflared).is_file():
+            env['CLOUDFLARED_PATH'] = str(Path(cloudflared).resolve())
         subprocess.run(['node', str(cli), 'tunnel', 'run', name],
-                       cwd=root, check=True)
+                       cwd=root, env=env, check=True)
     else:
         env = os.environ.copy()
         env['TUNNEL_TOKEN'] = required('STT_TUNNEL_TOKEN')
