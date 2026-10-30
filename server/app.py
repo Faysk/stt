@@ -71,7 +71,7 @@ def init():
             'priority':'INTEGER DEFAULT 0','outcome':'TEXT','runtime':'TEXT',
             'model_revision':'TEXT','stage':"TEXT DEFAULT 'queued'",
             'purged_at':'REAL','purge_retry_at':'REAL DEFAULT 0','purge_attempts':'INTEGER DEFAULT 0',
-            'purge_error':'TEXT','receipt_hash':'TEXT','receipt_lease':'TEXT','result_state':'TEXT','metrics_json':'TEXT'}.items():
+            'purge_error':'TEXT','receipt_hash':'TEXT','receipt_lease':'TEXT','result_state':'TEXT','metrics_json':'TEXT','engine':'TEXT'}.items():
             if name not in columns: c.execute(f'ALTER TABLE jobs ADD COLUMN {name} {definition}')
         c.execute("UPDATE jobs SET outcome=status WHERE outcome IS NULL AND status IN ('done','failed','cancelled')")
         c.execute("UPDATE jobs SET stage=status WHERE stage='queued' AND status IN ('done','failed','expired','cancelled')")
@@ -419,6 +419,8 @@ class Settings(BaseModel):
     device: str
     compute: str
     paused: bool = False
+    engine: str = 'whisper'
+    language_hint: str = Field(default='auto',min_length=2,max_length=32)
 
 @app.get('/api/admin', dependencies=[Depends(admin)])
 def dashboard():
@@ -434,7 +436,7 @@ def dashboard():
 def admin_job(r):
     data = {k:r[k] for k in ('id','title','status','outcome','created','started','finished','expires','heartbeat',
         'client_tag','network_tag','ui_language','priority','stage','attempts','worker','model','device','compute',
-        'duration','elapsed','cpu_seconds','peak_rss_mb','peak_vram_mb','input_bytes','language','error','model_revision','runtime','progress','result_state','purged_at','purge_attempts','purge_retry_at','purge_error')}
+        'duration','elapsed','cpu_seconds','peak_rss_mb','peak_vram_mb','input_bytes','language','error','model_revision','runtime','engine','progress','result_state','purged_at','purge_attempts','purge_retry_at','purge_error')}
     data['metrics'] = json.loads(r['metrics_json']) if r['metrics_json'] else None
     return data
 
@@ -499,8 +501,16 @@ def priority(jid: str,value: Priority):
 
 @app.put('/api/admin/settings', dependencies=[Depends(admin)])
 def settings(s: Settings):
-    if s.model not in MODELS or (s.device,s.compute) not in [('cpu','int8'),('cpu','float32'),('cuda','float16'),('cuda','int8_float16')]:
-        raise HTTPException(400,'Combinação de modelo, dispositivo ou precisão inválida.')
+    if s.engine=='whisper':
+        valid = s.model in MODELS and (s.device,s.compute) in (
+            ('cpu','int8'),('cpu','float32'),('cuda','float16'),('cuda','int8_float16'))
+    elif s.engine=='qwen3':
+        from server.qwen_engine import RECIPES
+        valid = s.model in RECIPES and s.device=='cuda' and s.compute in ('float16','bfloat16')
+    else:
+        valid = False
+    if not valid or not s.language_hint.replace('-','').isalpha():
+        raise HTTPException(400,'Combinação de motor, modelo, idioma, dispositivo ou precisão inválida.')
     with db() as c:
         c.execute('UPDATE settings SET value=? WHERE id=1', (s.model_dump_json(),))
         obs.event(c,None,'settings_changed','admin',s.model_dump())
@@ -521,12 +531,14 @@ def claim(w: Claim):
         cfg = json.loads(c.execute('SELECT value FROM settings WHERE id=1').fetchone()[0])
         if cfg['paused'] or cfg['worker'] != w.id:
             return {'job':None}
+        if cfg.get('engine','whisper')=='qwen3' and cfg['model'] not in w.info.get('qwen_models',[]):
+            return {'job':None}
         if c.execute("SELECT 1 FROM jobs WHERE status='running' AND worker=?",(w.id,)).fetchone():
             return {'job':None}
         r = c.execute("SELECT * FROM jobs WHERE status='queued' AND expires>? ORDER BY priority DESC,created,id LIMIT 1", (now,)).fetchone()
         if not r: return {'job':None}
         lease = secrets.token_hex(32)
-        c.execute("UPDATE jobs SET status='running',started=?,worker=?,model=?,device=?,compute=?,lease=?,heartbeat=?,attempts=attempts+1,error=NULL WHERE id=?", (now,w.id,cfg['model'],cfg['device'],cfg['compute'],lease,now,r['id']))
+        c.execute("UPDATE jobs SET status='running',started=?,worker=?,model=?,device=?,compute=?,engine=?,lease=?,heartbeat=?,attempts=attempts+1,error=NULL WHERE id=?", (now,w.id,cfg['model'],cfg['device'],cfg['compute'],cfg.get('engine','whisper'),lease,now,r['id']))
         c.execute("UPDATE jobs SET stage='preparing' WHERE id=?",(r['id'],))
         obs.event(c,r['id'],'started',w.id,dict(model=cfg['model'],device=cfg['device'],compute=cfg['compute']))
         return {'job':dict(id=r['id'],source=r['source'],lease=lease,expires=r['expires'],**cfg)}
