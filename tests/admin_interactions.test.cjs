@@ -79,7 +79,7 @@ vm.runInContext(fs.readFileSync('web/admin-enhancements.js','utf8'),ctx);
   assert.equal(nodes['model-catalog'].children.length,3);
   const sshCard=nodes['ssh-targets'].children[0];
   assert.match(sshCard.textContent,/Galaxy S7 Edge · SSH/);
-  assert.match(sshCard.textContent,/nenhum executor STT online/);
+  assert.match(sshCard.textContent,/Worker conectado · capacidade do modelo\/CPU ainda não validada/);
   sshCard.querySelector('button').fire('click');
   await new Promise(resolve=>setImmediate(resolve));
   assert.equal(clipboard[0],'ssh -p 8022 u0_a999@192.0.2.10');
