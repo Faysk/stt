@@ -624,6 +624,28 @@
 .public-page .upload-panel.is-busy .drop .step-icon {
   animation: stt-upload-breathe 2.2s ease-in-out infinite;
 }
+.public-page .upload-panel.is-busy #submit {
+  opacity: .86;
+  background: #5294dd;
+  border-color: #5294dd;
+  cursor: progress;
+}
+.public-page .upload-panel.is-busy #submit > [aria-hidden] {
+  font-size: 0;
+}
+.public-page .upload-panel.is-busy #submit > [aria-hidden]::after {
+  content: "";
+  display: inline-block;
+  inline-size: 12px;
+  block-size: 12px;
+  border: 2px solid #10294555;
+  border-top-color: #102945;
+  border-radius: 50%;
+  animation: stt-button-spin 850ms linear infinite;
+}
+@keyframes stt-button-spin {
+  to { transform: rotate(360deg); }
+}
 .public-page .transcript-card {
   transition: border-color 230ms ease, background 230ms ease, box-shadow 230ms ease;
 }
@@ -706,6 +728,7 @@
   .public-page .upload-visual[data-mode="indeterminate"] .upload-fill,
   .public-page .job-activity.is-indeterminate .job-activity-fill,
   .public-page .upload-panel.is-busy .drop .step-icon,
+  .public-page .upload-panel.is-busy #submit > [aria-hidden]::after,
   .public-page .transcript-card.card-appear,
   .public-page .transcript-card .badge.state-arrive,
   .public-page .transcript-card .badge.state-queued::before,
