@@ -31,7 +31,7 @@ class El {
   querySelector(sel){return this.querySelectorAll(sel)[0]||null}
 }
 const ids=['worker','model','device','compute','settings-message','settings-form','model-catalog','workers',
-  'versions','device-cards','precision-cards','config-summary','login','admin-key','admin-message',
+  'versions','device-cards','precision-cards','ssh-targets','config-summary','login','admin-key','admin-message',
   'runs','history','activity','usage','refresh','precision-explainer'];
 const nodes=Object.fromEntries(ids.map(id=>[id,new El('div')]));
 nodes.worker.value='notebook';nodes.model.value='small';nodes.device.value='cpu';nodes.compute.value='int8';
@@ -39,6 +39,7 @@ nodes.login.onclick=()=>{};
 const document={activeElement:null,querySelector(){return null;}};
 const el=(tag,text='',cls='')=>new El(tag,text,cls);
 const calls=[];
+const clipboard=[];
 const data={
  settings:{worker:'notebook',model:'small',device:'cpu',compute:'int8',paused:false},
  workers:[{id:'notebook',seen:100,info:{system:'Windows',cpu:28,models:[{id:'small',revision:'a'.repeat(40)}],
@@ -47,7 +48,7 @@ const data={
     {id:'cpu-only',seen:100,info:{system:'Linux',cpu:8,models:[],compute_types:{cpu:['int8']}}}],
  catalog:[{id:'small',repository:'Systran/faster-whisper-small'},
           {id:'turbo',repository:'mobiuslabsgmbh/faster-whisper-large-v3-turbo'}],
- now:100,preloads:[]
+ now:100,preloads:[],ssh_targets:[{id:'s7-edge',label:'Galaxy S7 Edge',configured:true,command:'ssh -p 8022 u0_a999@192.0.2.10'}]
 };
 const ctx=vm.createContext({
  document,$:id=>nodes[id],node:el,
@@ -65,12 +66,20 @@ const ctx=vm.createContext({
  },
  refresh:async()=>{},loadJobs:async()=>{},loadPeriod:async()=>{},
  precision(){}, api:async(path,opts)=>{calls.push({path,opts});return {id:'test',status:'pending'}},
+ navigator:{clipboard:{writeText:async text=>clipboard.push(text)}},
  console,Set,Map,Promise,Number
 });
 vm.runInContext(fs.readFileSync('web/admin-enhancements.js','utf8'),ctx);
 (async()=>{
   ctx.renderSettings(data);
   assert.equal(nodes['model-catalog'].children.length,2);
+  const sshCard=nodes['ssh-targets'].children[0];
+  assert.match(sshCard.textContent,/Galaxy S7 Edge · SSH/);
+  assert.match(sshCard.textContent,/nenhum executor STT online/);
+  sshCard.querySelector('button').fire('click');
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(clipboard[0],'ssh -p 8022 u0_a999@192.0.2.10');
+
   assert.equal(nodes['precision-cards'].children.length,4);
   assert.ok(nodes['precision-cards'].children.some(card=>card.dataset.compute==='int16'),
     'INT16 should be offered only when this CPU reports support');

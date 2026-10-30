@@ -184,6 +184,45 @@
       });
     });
   }
+  function renderSshTargets() {
+    const mount = $('ssh-targets');
+    if (!mount) return;
+    mount.replaceChildren();
+    for (const target of dashboardData.ssh_targets || []) {
+      const worker = dashboardData.workers.find(w => w.id === target.id);
+      const online = Boolean(worker && dashboardData.now - worker.seen < 90);
+      const info = worker?.info || {};
+      const types = info.compute_types?.cpu || [];
+      const modelReady = (info.models || []).some(m => m.id === $('model').value);
+      const capable = online && types.includes($('compute').value) &&
+        $('device').value === 'cpu' && modelReady;
+      const card = node('article','', 'worker-card ssh-target-card');
+      card.append(
+        node('strong', target.label + ' · SSH'),
+        node('p', capable ? 'Executor STT registrado · validar transcrição real'
+          : online ? 'Worker conectado · capacidade do modelo/CPU ainda não validada'
+            : 'Somente acesso SSH · nenhum executor STT online', 'small muted'),
+        node('code',target.command || 'SSH não configurado no servidor')
+      );
+      if (target.configured && target.command) {
+        const copy = node('button','Copiar comando SSH','button subtle');
+        copy.type = 'button';
+        copy.addEventListener('click',async () => {
+          try {
+            if (!navigator.clipboard?.writeText) throw Error('Clipboard indisponível');
+            await navigator.clipboard.writeText(target.command);
+            $('settings-message').textContent = 'Comando SSH copiado. Execute no terminal com acesso à rede local.';
+          } catch {
+            $('settings-message').textContent = 'Copie manualmente o comando SSH exibido no card.';
+          }
+        });
+        card.append(copy);
+      } else {
+        card.append(node('p','Defina STT_S7_SSH_HOST e STT_S7_SSH_USER no .env privado e reinicie a API.','small muted'));
+      }
+      mount.append(card);
+    }
+  }
   function renderDevices() {
     const mount = $('device-cards');
     if (!mount) return;
@@ -256,6 +295,7 @@
     originalRender(data);
     enhanceModels();
     enhanceWorkers();
+    renderSshTargets();
     renderDevices();
     renderPrecisions();
     $('config-summary').textContent = (dirty ? '● Alterações pendentes · ' : '✓ Configuração ativa · ') +

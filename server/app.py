@@ -22,6 +22,7 @@ from server.catalog import MODEL_CATALOG, installed_models
 from server import observability as obs
 from server.metrics import validate as validate_metrics
 from server.config import getenv
+from server.ssh_targets import ssh_targets
 
 load_dotenv()
 ROOT = Path(__file__).resolve().parents[1]
@@ -591,7 +592,8 @@ def dashboard():
           totals=dict(c.execute("SELECT count(*) jobs,coalesce(sum(duration),0) audio_seconds,coalesce(sum(elapsed),0) processing_seconds,coalesce(sum(input_bytes),0) bytes FROM jobs").fetchone()),
           host=host_snapshot,telemetry_error=telemetry_error,now=time.time(),versions=obs.package_versions(),
           models=MODELS,catalog=installed_models(getenv('STT_MODELS',str(ROOT/'models'))),
-          preloads=[dict(r) for r in c.execute('SELECT * FROM model_preloads ORDER BY updated DESC LIMIT 100')])
+          preloads=[dict(r) for r in c.execute('SELECT * FROM model_preloads ORDER BY updated DESC LIMIT 100')],
+          ssh_targets=ssh_targets())
 
 def admin_job(r):
     data = {k:r[k] for k in ('id','title','status','outcome','created','started','finished','expires','heartbeat',
@@ -682,6 +684,20 @@ def settings(s: Settings):
         valid = False
     if not valid or not s.language_hint.replace('-','').isalpha():
         raise HTTPException(400,'Combinação de motor, modelo, idioma, dispositivo ou precisão inválida.')
+    # A configured SSH host must never be mistaken for a live ASR worker.
+    # Until the S7 reports compatible CPU compute and a prepared Whisper model,
+    # selecting it would strand public jobs in the queue.
+    if s.worker == 's7-edge':
+        with db() as c:
+            row = c.execute('SELECT seen,info FROM workers WHERE id=?',(s.worker,)).fetchone()
+        info = json.loads(row['info']) if row else {}
+        advertised_models = info.get('models',[]) if isinstance(info.get('models'),list) else []
+        prepared = any(isinstance(m,dict) and m.get('id') == s.model for m in advertised_models)
+        cpu_types = info.get('compute_types',{})
+        cpu_types = cpu_types.get('cpu',[]) if isinstance(cpu_types,dict) else []
+        if (not row or time.time()-row['seen'] >= 90 or s.engine != 'whisper'
+                or s.device != 'cpu' or s.compute not in cpu_types or not prepared):
+            raise HTTPException(409,'S7 Edge apenas acessível por SSH: falta executor STT online com modelo e CPU compatíveis.')
     with db() as c:
         c.execute('UPDATE settings SET value=? WHERE id=1', (s.model_dump_json(),))
         obs.event(c,None,'settings_changed','admin',s.model_dump())
