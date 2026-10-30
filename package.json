@@ -1,1 +1,1 @@
-{"name":"faysk-tts-edge","private":true,"type":"module","scripts":{"deploy":"wrangler deploy","check":"node --check edge/worker.js && node --check web/app.js && node --check web/admin.js"},"devDependencies":{"wrangler":"^4.0.0"}}
+{"name":"faysk-tts-edge","private":true,"type":"module","scripts":{"deploy":"wrangler deploy","check":"node --check edge/worker.js && node --check web/i18n.js && node --check web/public.js && node --check web/dashboard.js"},"devDependencies":{"wrangler":"^4.0.0"}}

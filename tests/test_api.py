@@ -90,3 +90,81 @@ def test_parallel_claims(setup):
     with ThreadPoolExecutor(max_workers=8) as pool:
         results=list(pool.map(attempt,range(20)))
     assert sum(job is not None for job in results)==1
+
+ADMIN={'x-admin-key':'test-admin'}
+
+def test_admin_priority_audit_and_anonymous_identity(setup):
+    c,m=setup
+    first=submit(c)
+    second=submit(c)
+    assert c.patch(f'/api/admin/jobs/{second}/priority',json={'priority':9}).status_code==401
+    assert c.patch(f'/api/admin/jobs/{second}/priority',headers=ADMIN,json={'priority':10}).status_code==422
+    assert c.patch(f'/api/admin/jobs/{second}/priority',headers=ADMIN,json={'priority':9}).status_code==200
+    listed=c.get('/api/jobs',headers=SESSION).json()
+    assert next(j for j in listed if j['id']==second)['position']==1
+    assert next(j for j in listed if j['id']==first)['position']==2
+    assert all('worker' not in j and 'model' not in j for j in listed)
+    claimed=c.post('/api/worker/claim',headers=WORKER,json={'id':'notebook'}).json()['job']
+    assert claimed['id']==second
+    assert c.patch(f'/api/admin/jobs/{second}/priority',headers=ADMIN,json={'priority':1}).status_code==409
+    assert c.post(f'/api/worker/{second}/heartbeat',headers=WORKER,json={'lease':claimed['lease'],'stage':'transcribing','progress':35}).status_code==200
+    result={'lease':claimed['lease'],'duration':10,'elapsed':2,'runtime':{'faster-whisper':'1.2.1'},'model_revision':'a'*40}
+    assert c.post(f'/api/worker/{second}/result',headers=WORKER,json=result).status_code==200
+    detail=c.get(f'/api/admin/jobs/{second}',headers=ADMIN).json()
+    assert [e['kind'] for e in detail['events']]==['submitted','priority_changed','started','stage','done']
+    assert all(k not in detail['job'] for k in ['owner','lease','source'])
+    label=detail['job']['client_tag']
+    assert len(label)==16 and label!=m.hashlib.sha256(('a'*64).encode()).hexdigest()[:16]
+    assert detail['job']['model_revision']=='a'*40
+    assert c.get('/api/admin/jobs',headers=ADMIN,params={'search':label}).json()['total']==2
+    with m.db() as d: d.execute('UPDATE jobs SET expires=? WHERE id=?',(time.time()-1,second))
+    m.maintenance()
+    detail=c.get(f'/api/admin/jobs/{second}',headers=ADMIN).json()['job']
+    assert detail['title'] is None and detail['outcome']=='done' and detail['client_tag']==label
+    usage=c.get('/api/admin/clients',headers=ADMIN).json()
+    assert usage['clients'][0]['jobs']==2
+    assert usage['clients'][0]['audio_seconds']==10
+
+def test_history_preserves_peaks_gaps_and_validates_period(setup):
+    c,m=setup
+    now=time.time()
+    with m.db() as d:
+        d.execute('DELETE FROM telemetry')
+        sample=int(now//60)*60-120
+        m.obs.record(d,'api-host',10,40,None,20,1,now=sample+10)
+        m.obs.record(d,'api-host',90,60,70,20,5,now=sample+11)
+        history=m.obs.history(d,'hour',now=now)
+    point=next(p for p in history['points'] if p['n']==2)
+    assert point['cpu']==50 and point['cpu_max']==90 and point['queue_max']==5
+    assert point['gpu']==70 and point['gpu_max']==70
+    assert any(p['cpu'] is None and p['submitted']==0 for p in history['points'])
+    for period in m.obs.PERIODS:
+        response=c.get('/api/admin/history',headers=ADMIN,params={'period':period})
+        assert response.status_code==200
+        assert len(response.json()['points'])<=200
+    assert c.get('/api/admin/history',headers=ADMIN,params={'period':'invalid'}).status_code==400
+    assert c.get('/api/admin/history').status_code==401
+
+def test_filters_and_public_status(setup):
+    c,m=setup
+    ids=[submit(c) for _ in range(4)]
+    h=c.get('/api/health').json()
+    assert h['pressure']=='medium' and h['waiting']==4
+    assert c.get('/api/admin/jobs',headers=ADMIN,params={'status':'running'}).json()['total']==0
+    assert c.get('/api/admin/jobs',headers=ADMIN,params={'search':ids[0][:10]}).json()['total']==1
+    assert c.get('/api/admin/jobs',headers=ADMIN,params={'search':"' OR 1=1 --"}).json()['total']==0
+    assert c.get('/api/admin/jobs',headers=ADMIN,params={'page':0}).status_code==400
+    assert c.get('/api/admin/jobs',headers=ADMIN,params={'limit':100000}).status_code==400
+    assert c.get('/api/admin/jobs',headers=ADMIN,params={'status':'bad'}).status_code==400
+    assert len(c.get('/api/admin',headers=ADMIN).json()['catalog'])==6
+
+def test_migration_is_idempotent(setup):
+    c,m=setup
+    jid=submit(c)
+    with m.db() as d:
+        d.execute("UPDATE jobs SET status='done',outcome=NULL,client_tag=NULL WHERE id=?",(jid,))
+    m.init()
+    m.init()
+    with m.db() as d:
+        row=d.execute('SELECT outcome,client_tag FROM jobs WHERE id=?',(jid,)).fetchone()
+    assert row['outcome']=='done' and row['client_tag']

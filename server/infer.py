@@ -8,6 +8,8 @@ import time
 from pathlib import Path
 
 import psutil
+from server.observability import package_versions
+from server.catalog import installed_models
 
 DLL_HANDLES=[]
 if os.name=='nt':
@@ -40,29 +42,42 @@ def run(config):
     thread=threading.Thread(target=sample,daemon=True)
     thread.start()
     result={}
+    media_title=None
+    def progress(stage,value=0):
+        temp=folder/'progress.tmp'
+        temp.write_text(json.dumps(dict(stage=stage,progress=min(99,max(0,value)))),encoding='utf-8')
+        temp.replace(folder/'progress.json')
     try:
         media=folder/'input.media'
         if job['source']!='upload':
+            progress('downloading')
             import yt_dlp
             def limit(d):
                 if d.get('downloaded_bytes',0)>90*1024**2:
                     raise ValueError('Download excede 90 MB.')
             with yt_dlp.YoutubeDL({'js_runtimes':{'node':{}},'format':'bestaudio/best','noplaylist':True,'outtmpl':str(media),'max_filesize':90*1024**2,'socket_timeout':30,'retries':2,'quiet':True,'progress_hooks':[limit],'match_filter':lambda info,**kw: 'Duração máxima: 2 horas.' if (info.get('duration') or 0)>7200 or info.get('is_live') else None}) as ydl:
-                ydl.download([job['source']])
+                media_info=ydl.extract_info(job['source'],download=True)
+                if media_info: media_title=(media_info.get('title') or 'YouTube')[:180]
         # PyAV decodes independently of the uploaded filename, with a duration cap.
         import av
         with av.open(str(media)) as container:
             duration=(container.duration or 0)/av.time_base
             if duration>7200: raise ValueError('Duração máxima: 2 horas.')
         from faster_whisper import WhisperModel
-        model=WhisperModel(job['model'],device=job['device'],compute_type=job['compute'],cpu_threads=8,download_root=os.getenv('TTS_MODELS',str(Path(__file__).resolve().parents[1]/'models')))
+        progress('loading')
+        model_root=os.getenv('TTS_MODELS',str(Path(__file__).resolve().parents[1]/'models'))
+        model=WhisperModel(job['model'],device=job['device'],compute_type=job['compute'],cpu_threads=8,download_root=model_root)
+        revisions={m['id']:m['revision'] for m in installed_models(model_root)}
+        progress('transcribing')
         segments,info=model.transcribe(str(media),beam_size=5,vad_filter=True)
         if info.duration>7200: raise ValueError('Duração máxima: 2 horas.')
         output=[]
         for segment in segments:
             if segment.end>7200: raise ValueError('Duração máxima: 2 horas.')
             output.append(dict(start=segment.start,end=segment.end,text=segment.text))
-        result=dict(segments=output,language=info.language,duration=info.duration,input_bytes=media.stat().st_size)
+            progress('transcribing',segment.end/max(info.duration,1)*100)
+        progress('finishing',99)
+        result=dict(segments=output,language=info.language,duration=info.duration,input_bytes=media.stat().st_size,model_revision=revisions.get(job['model']),title=media_title)
     except Exception as e:
         print(f'Inference error: {type(e).__name__}',file=sys.stderr,flush=True)
         result={'error':'Não foi possível transcrever. Verifique o arquivo, o acesso ao vídeo ou a configuração do executor.'}
@@ -70,7 +85,7 @@ def run(config):
         done.set()
         thread.join(timeout=5)
         cpu=proc.cpu_times()
-        result.update(peaks,elapsed=time.perf_counter()-started,cpu_seconds=cpu.user+cpu.system)
+        result.update(peaks,elapsed=time.perf_counter()-started,cpu_seconds=cpu.user+cpu.system,runtime=package_versions())
         (folder/'result.json').write_text(json.dumps(result,ensure_ascii=False),encoding='utf-8')
 
 if __name__=='__main__': run(sys.argv[1])

@@ -11,6 +11,7 @@ from pathlib import Path
 
 import httpx
 from dotenv import load_dotenv
+from server.observability import package_versions
 
 load_dotenv()
 BASE = os.getenv('TTS_URL','http://127.0.0.1:8765').rstrip('/')
@@ -21,10 +22,15 @@ client = httpx.Client(base_url=BASE,headers=HEADERS,timeout=60)
 def execute(job):
     finished = threading.Event()
     lost = threading.Event()
+    progress_file=None
     def heartbeat():
         while not finished.wait(15):
             try:
-                r = client.post(f"/api/worker/{job['id']}/heartbeat",json={'lease':job['lease']})
+                progress={'progress':0,'stage':'preparing'}
+                if progress_file and progress_file.exists():
+                    try: progress=json.loads(progress_file.read_text(encoding='utf-8'))
+                    except (ValueError,OSError): pass
+                r = client.post(f"/api/worker/{job['id']}/heartbeat",json={'lease':job['lease'],**progress})
                 if r.status_code==409: lost.set()
             except httpx.HTTPError:
                 pass
@@ -33,6 +39,7 @@ def execute(job):
     try:
         with tempfile.TemporaryDirectory(prefix='tts-', dir=os.getenv('TTS_TMP')) as temp:
             folder = Path(temp)
+            progress_file=folder/'progress.json'
             config = folder/'job.json'
             config.write_text(json.dumps(job),encoding='utf-8')
             if job['source']=='upload':
@@ -67,7 +74,7 @@ def main():
     print(f'Executor {IDENTITY} conectado a {BASE}',flush=True)
     while True:
         try:
-            r=client.post('/api/worker/claim',json={'id':IDENTITY,'info':{'system':platform.system(),'machine':platform.machine(),'cpu':os.cpu_count(),'engine':'faster-whisper'}})
+            r=client.post('/api/worker/claim',json={'id':IDENTITY,'info':{'system':platform.system(),'machine':platform.machine(),'cpu':os.cpu_count(),'engine':'faster-whisper','versions':package_versions()}})
             r.raise_for_status()
             job=r.json()['job']
             if job: execute(job)

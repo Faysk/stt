@@ -12,3 +12,4 @@ jobs:
         with:
           node-version: '22'
       - run: npm run check
+      - run: node tests/i18n.test.cjs
