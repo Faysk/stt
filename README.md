@@ -51,6 +51,10 @@ O serviço STT já foi verificado em transcrição de um vídeo público do YouT
 
 Consulte [prontidão para release, marcos propostos e critérios de 100%](docs/RELEASE_READINESS.md). Este estado refere-se ao STT; o bloqueio de mapeamento integral do repositório IaC é independente.
 
+## Publicação supervisionada
+
+A publicação na máquina Windows **não acontece automaticamente** quando um PR é integrado. O operador pode atualizar o backend local e publicar o Worker `faysk-stt` a partir da [rotina protegida de publicação](docs/OPERATOR_PUBLISH.md), com testes e verificações HTTP. Ela exige confirmar fila vazia, não apaga dados nem altera o Tunnel ou DNS.
+
 ## Projeto aberto
 
 O código está disponível sob a licença MIT. Para contribuir, executar sua própria instalação ou verificar o projeto, consulte o [guia de desenvolvimento](docs/DEVELOPMENT.md).
