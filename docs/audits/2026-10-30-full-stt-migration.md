@@ -134,3 +134,14 @@ O novo Worker é independente, `faysk-stt`, usando temporariamente a origem anti
 A issue **[#28 — ações humanas e bloqueios externos](https://github.com/Faysk/tts/issues/28)** reúne passo a passo completo para Cloudflare real, Windows/backup, GPUs/modelos Qwen, duas origens do navegador, release/rename, evidências e política de não divulgar segredos. A execução dessas tarefas é a diferença entre **código preparado** e **produção validada**.
 
 **Estado de decisão permanece NO-GO até #19 e #28 aprovadas.** Testes sintéticos/CI verdes não substituem hardware, tráfego ou rollback real.
+
+
+## 10. Verificação adicional de prontidão (30/10/2026 — draft PR #30)
+
+A revisão posterior encontrou uma distinção operacional crítica: respostas **401/403 da API para o worker** significam falha de autenticação, não transcrição inválida. No PR [#30](https://github.com/Faysk/tts/pull/30), a outbox agora permanece íntegra, faz retry com backoff e interrompe novos claims até correção da credencial; **422** continua com quarentena por payload inválido. Isso evita processar dezenas de trabalhos com um segredo inválido sem conseguir entregar resultados.
+
+O limite de upload foi exercitado com multipart transferido em chunks sem `Content-Length`. Inicialmente, o parser devolvia **400** em vez do **413** correto; a camada ASGI foi corrigida, mantendo headers `no-store`, `noindex`, `nosniff`, CSP e referrer-policy nas rejeições. Edge faz o mesmo nas respostas upstream e 503 sem configuração. Log Qwen foi sanitizado para não registar mensagens de exceção contendo paths locais.
+
+O teste de rollback foi ampliado para **FastAPI + SQLite de verdade no ambiente temporário**: criar job, reivindicar lease, publicar resultado sintético por API, executar helper de rollback (dry-run e depois aplicação no fixture offline) e confirmar TXT/SRT nas duas disposições de arquivos. Isso **não é** um ensaio de produção/NTFS.
+
+**Evidência verificada:** commit `1a7d7df67eda8cffed5683f1b568bfb81716902f`, [Tests success — 57 Python + JS/PowerShell/Worker dry-run](https://github.com/Faysk/tts/actions/runs/41057612418), [Security audit success](https://github.com/Faysk/tts/actions/runs/41057612526). Nenhum PR foi mesclado, nenhum dado privado foi lido e nenhum recurso Cloudflare ativo foi alterado. Bloqueios externos continuam listados na **[#28](https://github.com/Faysk/tts/issues/28)**, e a decisão de produção segue **NO-GO** sem #19.
