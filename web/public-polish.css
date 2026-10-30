@@ -546,3 +546,172 @@
     transition: none;
   }
 }
+
+/*
+ * Real progress and quiet lifecycle motion.
+ * Upload bar reflects XHR bytes; job bar reflects API progress when available.
+ * Indeterminate motion is deliberately NOT a simulated percentage.
+ */
+.public-page #upload-progress:not([hidden]) {
+  position: absolute;
+  inline-size: 1px;
+  block-size: 1px;
+  padding: 0;
+  margin: -1px;
+  border: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+.public-page .upload-visual {
+  display: flex;
+  align-items: center;
+  gap: 13px;
+  margin-top: 12px;
+  min-block-size: 14px;
+}
+.public-page .upload-track,
+.public-page .job-activity-track {
+  position: relative;
+  display: block;
+  flex: 1;
+  min-inline-size: 0;
+  block-size: 5px;
+  overflow: hidden;
+  border-radius: 100px;
+  background: #28374d;
+}
+.public-page .upload-fill,
+.public-page .job-activity-fill {
+  position: relative;
+  display: block;
+  block-size: 100%;
+  inline-size: 0;
+  overflow: hidden;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #4a93f2, #70c0ff);
+  transition: inline-size 420ms cubic-bezier(.22, 1, .36, 1);
+  will-change: auto;
+}
+.public-page .upload-visual[data-mode="determinate"] .upload-fill::after,
+.public-page .job-activity:not(.is-indeterminate) .job-activity-fill::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(100deg, transparent 20%, #ffffff35 50%, transparent 80%);
+  transform: translateX(-115%);
+  animation: stt-meter-glint 2.5s ease-in-out infinite;
+}
+.public-page .upload-percent {
+  min-inline-size: 36px;
+  color: #a9cfff;
+  font: 600 11px/1.4 Consolas, monospace;
+  text-align: end;
+  font-variant-numeric: tabular-nums;
+}
+.public-page .upload-visual[data-mode="indeterminate"] .upload-fill,
+.public-page .job-activity.is-indeterminate .job-activity-fill {
+  inline-size: 30% !important;
+  background: linear-gradient(90deg, #4b92f27a, #70c0ff, #4b92f27a);
+  animation: stt-meter-wait 1.55s ease-in-out infinite;
+}
+.public-page .upload-panel.is-busy {
+  border-color: #436589;
+}
+.public-page .upload-panel.is-busy .drop {
+  border-color: #4c6f93;
+}
+.public-page .upload-panel.is-busy .drop .step-icon {
+  animation: stt-upload-breathe 2.2s ease-in-out infinite;
+}
+.public-page .transcript-card {
+  transition: border-color 230ms ease, background 230ms ease, box-shadow 230ms ease;
+}
+.public-page .transcript-card[data-status="running"] {
+  border-color: #426184;
+}
+.public-page .transcript-card[data-status="queued"] {
+  border-color: #3b4a60;
+}
+.public-page .transcript-card.card-appear {
+  animation: stt-card-enter 370ms cubic-bezier(.2,.7,.25,1) both;
+}
+.public-page .transcript-card .badge.state-arrive {
+  animation: stt-state-enter 300ms cubic-bezier(.18,.8,.2,1) both;
+}
+.public-page .transcript-card .badge.state-queued::before,
+.public-page .transcript-card .badge.state-running::before {
+  content: "";
+  display: inline-block;
+  flex: none;
+  inline-size: 5px;
+  block-size: 5px;
+  margin-inline-end: 5px;
+  border-radius: 50%;
+  background: currentColor;
+  animation: stt-state-pulse 1.8s ease-in-out infinite;
+}
+.public-page .transcript-card .badge.state-running::before {
+  animation-duration: 1.35s;
+}
+.public-page .transcript-card .job-activity {
+  margin: 3px 0 12px;
+  min-block-size: 5px;
+}
+.public-page .transcript-card .job-activity-track {
+  block-size: 4px;
+  background: #273449;
+}
+.public-page .transcript-card .job-activity-fill {
+  background: linear-gradient(90deg, #4e9af4, #7bbff8);
+}
+.public-page .transcript-card[data-status="done"] .file-symbol {
+  transition: border-color 230ms ease, color 230ms ease;
+  border-color: #3e5c76;
+}
+@keyframes stt-meter-wait {
+  0% { transform: translateX(-115%); opacity: .55; }
+  50% { opacity: 1; }
+  100% { transform: translateX(350%); opacity: .6; }
+}
+@keyframes stt-meter-glint {
+  0%, 22% { transform: translateX(-115%); }
+  70%, 100% { transform: translateX(115%); }
+}
+@keyframes stt-upload-breathe {
+  0%, 100% { opacity: .72; transform: translateY(0); }
+  50% { opacity: 1; transform: translateY(-3px); }
+}
+@keyframes stt-card-enter {
+  from { opacity: 0; transform: translateY(7px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes stt-state-enter {
+  from { opacity: .45; transform: translateY(3px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes stt-state-pulse {
+  0%, 100% { opacity: .5; transform: scale(.85); }
+  50% { opacity: 1; transform: scale(1.2); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .public-page .upload-fill,
+  .public-page .job-activity-fill,
+  .public-page .transcript-card,
+  .public-page .transcript-card[data-status="done"] .file-symbol {
+    transition: none !important;
+  }
+  .public-page .upload-fill::after,
+  .public-page .job-activity-fill::after,
+  .public-page .upload-visual[data-mode="indeterminate"] .upload-fill,
+  .public-page .job-activity.is-indeterminate .job-activity-fill,
+  .public-page .upload-panel.is-busy .drop .step-icon,
+  .public-page .transcript-card.card-appear,
+  .public-page .transcript-card .badge.state-arrive,
+  .public-page .transcript-card .badge.state-queued::before,
+  .public-page .transcript-card .badge.state-running::before {
+    animation: none !important;
+    transform: none !important;
+    opacity: 1 !important;
+  }
+}
