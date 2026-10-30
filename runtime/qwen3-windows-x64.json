@@ -1,0 +1,26 @@
+{
+  "schema": "tts_qwen_runtime_recipe_v1",
+  "status": "experimental-requires-physical-validation",
+  "runtime_id": "qwen3-transformers-isolated",
+  "python": "3.12.14",
+  "packages": {
+    "torch": "2.13.0",
+    "transformers": "5.18.0",
+    "accelerate": "1.15.0",
+    "huggingface-hub": "1.32.0",
+    "safetensors": "0.8.0",
+    "av": "19.0.1",
+    "numpy": "2.5.4",
+    "yt-dlp": "2026.10.26"
+  },
+  "torch_index_url": "https://download.pytorch.org/whl/cu126",
+  "cuda_family": "12.6",
+  "minimum_compute_capability": "7.5",
+  "timestamp_policy": "none_until_aligner_validated",
+  "model_revisions": {
+    "qwen-fast": "7f1569a48a89f3e3f4dc3a5c9d28bddd903bc76c",
+    "qwen-quality": "bcd2b5b7f32b480ab5790554cfa8347f246a14f3"
+  },
+  "reference": "Faysk/tda local-companion/runtime/qwen-windows-x64.json @ 4b47603f87f4300b661ab2022cd7337d66c3700a",
+  "notes": "Separate venv only. No automated installations, model downloads or service activation. Revalidate API/version compatibility and the RTX 4070/3090 physical gate before deployment."
+}
