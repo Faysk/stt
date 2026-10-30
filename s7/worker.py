@@ -159,13 +159,25 @@ def deliver(cfg,path):
     if code in (401,403):
         return "auth_blocked"
     if code not in (408,425,429,502,503,504) and code < 500:
-        return "quarantined"  # Preserve evidence until TTL; do not hot-loop on 422.
+        data["next_try"]=data["expires"]  # Quarantine until TTL, never hot-loop on 422.
+        data["quarantined_status"]=code
+        atomic_json(path,data)
+        return "quarantined"
     data["attempts"]+=1
     data["next_try"]=now+min(60,2**min(data["attempts"],6))
     atomic_json(path,data)
     return "pending"
 
 def drain(cfg):
+    # A hard power loss can leave a partially downloaded media directory.
+    # Only remove stale worker-owned temp directories; never touch Observatory.
+    for folder in cfg["work"].glob("job-*"):
+        try:
+            if (folder.is_dir() and not folder.is_symlink()
+                    and time.time()-folder.stat().st_mtime>86400):
+                shutil.rmtree(folder)
+        except OSError:
+            pass
     blocking=False
     for p in sorted(cfg["work"].glob("result-*.json")):
         try:
