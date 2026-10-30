@@ -10,7 +10,7 @@ $api = Start-Process -FilePath $runtime -ArgumentList '-m','uvicorn','server.app
 $agent = Start-Process -FilePath $runtime -ArgumentList '-m','server.worker' -WorkingDirectory $projectPath -WindowStyle Hidden -RedirectStandardOutput (Join-Path $logs 'worker.log') -RedirectStandardError (Join-Path $logs 'worker-error.log') -PassThru
 @{api=$api.Id;worker=$agent.Id} | ConvertTo-Json | Set-Content (Join-Path $logs 'pids.json')
 $envText = Get-Content -LiteralPath (Join-Path $projectPath '.env') -Raw
-if ($envText -match '(?m)^(?:STT|TTS)_TUNNEL_TOKEN=') {
+if ($envText -match '(?m)^STT_TUNNEL_TOKEN=') {
   $tunnel = Start-Process -FilePath $runtime -ArgumentList '-m','server.tunnel' -WorkingDirectory $projectPath -WindowStyle Hidden -RedirectStandardOutput (Join-Path $logs 'tunnel.log') -RedirectStandardError (Join-Path $logs 'tunnel-error.log') -PassThru
   $tunnel.Id | Set-Content (Join-Path $logs 'tunnel.pid')
 }
