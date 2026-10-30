@@ -30,15 +30,16 @@ pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\publish-stt.ps1 -Apply -
 1. Confere repositório Faysk/stt, branch main, checkout limpo, .venv e .env.
 2. Atualiza main com pull fast-forward, verifica **somente leitura** que as dependências já instaladas correspondem ao `package-lock.json` (incluindo versões/integridade dos pacotes; permite opcionais incompatíveis com a plataforma), executa testes Python/Node e dry-run Wrangler. **Não executa `npm ci` durante a publicação.**
 3. Confirma os endpoints HTTP atuais 200 (site), 200 (API) e 403 (origem sem segredo).
-4. Encerra somente os processos STT identificados pelos arquivos PID, **espera até 45 segundos a libertação da porta 8765** e só então reinicia API, executor e Tunnel configurado; se continuar ocupada, interrompe a publicação sem matar processos desconhecidos.
+4. Encerra somente **API e worker** STT identificados pelos arquivos PID, **preservando o Tunnel e seus processos filhos**. Espera até 45 segundos a libertação da porta 8765 e só então reinicia API/worker; se continuar ocupada, interrompe a publicação sem matar processos desconhecidos. O Tunnel só é iniciado separadamente quando estiver parado, fora do publicador.
 5. Repete o health gate antes de fazer npm run deploy com aprovação explícita apenas para Worker faysk-stt e domínio stt.faysk.dev.
 6. Confirma novamente HTTP 200/200/403 e que o asset /admin-enhancements.js retorna 200, mostrando o SHA do checkout implantado.
 
 ## Limites e incidentes
 
-- Não reinicia Windows, não cria autostart, não instala modelos, não altera DNS ou Tunnel, não administra Terraform, não atualiza segredos, não altera banco SQLite.
+- Não reinicia Windows, não cria autostart, não instala modelos, não altera DNS ou Tunnel, não administra Terraform, não atualiza segredos, não altera banco SQLite. **Release nunca para nem reinicia o conector existente do Tunnel**; é responsabilidade do operador mantê-lo saudável.
 - Se um teste local falhar antes do stop, o script não muda serviço/Worker. Se falhar depois do stop (incluindo `STT_PORT_NOT_RELEASED`), investigue os logs locais; o script NÃO faz rollback automático. Se a API ficar indisponível, confirme se há processos STT restantes e se a porta 8765 está livre antes de executar `pwsh -File .\\scripts\\start.ps1`. Nunca execute novo `-Apply` apenas para restaurar o serviço.
 - Se `STT_NODE_DEPS_NOT_READY` aparecer, a publicação é interrompida **antes** de parar a API. Numa janela de manutenção, identifique/feche o processo Wrangler de desenvolvimento que usa `node_modules/@esbuild/*/esbuild.exe`, execute `npm ci` **uma única vez fora do publicador**, valide com `node scripts/verify-node-deps.mjs` e recomece. Não encerre cegamente processos Node, Python ou Tunnel; não execute o deploy manual para contornar esse gate.
+- Se o gate inicial retornar HTTP 530 para API e origem, não repita `-Apply`: diagnostique primeiro `server.tunnel`/`cloudflared`, status de `logs/tunnel.pid`, logs sanitizados, e código 1XXX da Cloudflare (issue #75). O frontend 200 por si só não prova conectividade com a origem.
 - HTTP 200/200/403 não comprova transcrição real, GPU nem persistência após reboot. Essas verificações continuam pendentes.
 - Nunca compartilhe logs com tokens, conteúdo de transcrições, .env, banco, outbox ou arquivos de mídia.
 
