@@ -10,3 +10,6 @@ node_modules/
 .wrangler/
 *.wav
 !tests/fixtures/*.wav
+
+# Durable local worker result spool (never commit media/transcripts/lease tokens)
+worker-outbox/
