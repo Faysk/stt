@@ -665,7 +665,7 @@ def priority(jid: str,value: Priority):
 def settings(s: Settings):
     if s.engine=='whisper':
         supported = {
-            'cpu': ('int8','float32','int8_float32'),
+            'cpu': ('int8','int16','float32','int8_float32'),
             'cuda': ('float16','int8_float16','float32','int8','bfloat16','int8_bfloat16')
         }
         valid = s.model in MODELS and s.compute in supported.get(s.device,())
