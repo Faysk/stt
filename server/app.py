@@ -29,6 +29,8 @@ BLOB = DATA / 'blob'
 DB = DATA / 'db' / 'tts.sqlite3'
 MAX_BYTES = 90 * 1024 * 1024
 TTL = 86400
+OPERATIONAL_RETENTION = 30 * TTL
+AGGREGATE_RETENTION = 5 * 365 * TTL
 MODELS = ['tiny', 'base', 'small', 'medium', 'large-v3', 'turbo']
 
 @contextmanager
@@ -144,6 +146,20 @@ def maintenance():
         c.execute("UPDATE jobs SET status='failed',outcome='failed',stage='failed',finished=?,error='Envio interrompido.' WHERE status='uploading' AND created<?",(now,now-900))
         c.execute('DELETE FROM admission WHERE created<?',(now-3600,))
         c.execute('DELETE FROM upload_slots WHERE created<?',(now-7200,))
+        # Privacy budget: anonymous operational identifiers and granular events
+        # have a finite 30-day lifetime; aggregate counters stay available.
+        boundary = now - OPERATIONAL_RETENTION
+        c.execute('DELETE FROM events WHERE at<?',(boundary,))
+        c.execute("""UPDATE jobs SET client_tag=NULL,network_tag=NULL,ui_language=NULL
+                     WHERE expires<? AND
+                     (client_tag IS NOT NULL OR network_tag IS NOT NULL OR ui_language IS NOT NULL)""",
+                  (boundary,))
+        c.execute('DELETE FROM workers WHERE seen<?',(boundary,))
+        # Historical trends intentionally cover at most five years. Retain a
+        # job purge receipt when physical deletion has not succeeded yet.
+        oldest = now - AGGREGATE_RETENTION
+        c.execute('DELETE FROM jobs WHERE expires<? AND purged_at IS NOT NULL',(oldest,))
+        c.execute('DELETE FROM telemetry WHERE bucket<?',(oldest,))
 
 stop = threading.Event()
 host_snapshot={}
