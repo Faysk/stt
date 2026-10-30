@@ -32,6 +32,27 @@ function HttpCode([string]$Url) {
     }
 }
 
+function Wait-SttPortReleased([int]$Port = 8765, [int]$TimeoutSeconds = 45) {
+    # Stop-Process may return while the OS is still tearing down an HTTP
+    # listener. Never blindly start a second Uvicorn instance.
+    $timer = [System.Diagnostics.Stopwatch]::StartNew()
+    while ($true) {
+        $listeners = @(
+            Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue |
+                Where-Object { $null -ne $_ }
+        )
+        if ($listeners.Count -eq 0) {
+            Write-Host "Port $Port released; safe to attempt startup."
+            return
+        }
+        if ($timer.Elapsed.TotalSeconds -ge $TimeoutSeconds) {
+            $owners = (@($listeners | Select-Object -ExpandProperty OwningProcess -Unique) -join ', ')
+            throw "STT_PORT_NOT_RELEASED: port $Port still has listener PID(s): $owners. No restart/deploy attempted; inspect ownership before retrying."
+        }
+        Start-Sleep -Milliseconds 400
+    }
+}
+
 function Test-SttHttp([string]$Phase, [int]$Attempts = 1) {
     $targets = @(
         @{Name='Frontend'; Url='https://stt.faysk.dev/'; Expected=200}
@@ -116,6 +137,8 @@ try {
     Test-SttHttp 'before-restart'
     Write-Host 'Stopping only the processes recorded by this project...'
     & (Join-Path $root 'scripts\stop.ps1')
+    Write-Host 'Waiting for the old API listener to release port 8765...'
+    Wait-SttPortReleased -Port 8765 -TimeoutSeconds 45
     Write-Host 'Starting API, worker and configured Tunnel from this checkout...'
     & (Join-Path $root 'scripts\start.ps1')
     Test-SttHttp 'after-restart' 6
