@@ -4,6 +4,7 @@ import json
 import os
 import platform
 import signal
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -352,7 +353,12 @@ def prepare_model(op):
         repository=next(item['repository'] for item in MODEL_CATALOG if item['id']==op['model'])
         root=Path(getenv('STT_MODELS',str(ROOT/'models'))).resolve()
         root.mkdir(parents=True,exist_ok=True)
-        snapshot=Path(snapshot_download(repo_id=repository,cache_dir=str(root),
+        # Reserve room for current jobs and temporary download files.
+        estimated_mb={'tiny':150,'base':300,'small':850,'medium':2600,
+                      'large-v3':6000,'turbo':3800}.get(op['model'],6000)
+        if shutil.disk_usage(root).free < (estimated_mb+2048)*1024**2:
+            raise OSError('Insufficient free disk space for model cache')
+        snapshot=Path(snapshot_download(repo_id=repository,cache_dir=str(root),max_workers=2,
                      allow_patterns=['config.json','model.bin','tokenizer.json',
                                      'vocabulary.*','preprocessor_config.json']))
         if not (snapshot/'model.bin').is_file() or not (snapshot/'config.json').is_file():
