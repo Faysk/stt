@@ -233,3 +233,34 @@ def test_outbox_atomic_rename_fsyncs_directory_on_posix(tmp_path,monkeypatch):
     w._atomic_json(path,{'payload':'synthetic-transcript'})
     assert json.loads(path.read_text(encoding='utf-8'))['payload']=='synthetic-transcript'
     assert flushed==['file','dir']
+
+
+def test_new_generation_fsyncs_parent_directory_before_sqlite_can_point_to_it(tmp_path,monkeypatch):
+    import server.app as mod
+    folder=tmp_path/'job-data'
+    folder.mkdir()
+    observed=[]
+    actual=mod._fsync_directory
+    def observe(path):
+        observed.append(path)
+        return actual(path)
+    monkeypatch.setattr(mod,'_fsync_directory',observe)
+    digest='a'*64
+    mod._publish_generation(folder,digest,{'txt':'test result'})
+    assert (folder/'results'/digest/'transcript.txt').read_text(encoding='utf-8')=='test result'
+    assert observed[0]==folder
+    assert observed[1].parent==folder/'results'
+    assert observed[1].name.startswith('.stage-')
+    assert observed[2]==folder/'results'
+
+
+def test_generation_rejects_symlinked_results_directory(tmp_path):
+    import server.app as mod
+    folder=tmp_path/'job'
+    folder.mkdir()
+    outside=tmp_path/'outside'
+    outside.mkdir()
+    (folder/'results').symlink_to(outside,target_is_directory=True)
+    with pytest.raises(OSError,match='Unsafe result storage directory'):
+        mod._publish_generation(folder,'a'*64,{'txt':'must not escape'})
+    assert list(outside.iterdir())==[]
