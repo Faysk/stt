@@ -15,6 +15,7 @@ jobs:
       - run: npm run check
       - run: node tests/i18n.test.cjs
       - run: node tests/session_compat.test.cjs
+      - run: node tests/deploy_guard.test.cjs
       - run: node tests/edge.test.cjs
 
   worker-stt-build:
