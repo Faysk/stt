@@ -47,7 +47,7 @@ def main(argv=None):
     token=os.getenv('CLOUDFLARE_API_TOKEN')
     if not token:
         text=Path(os.environ['CF_CREDENTIAL_FILE']).read_text(encoding='utf-8-sig')
-        tokens=set(re.findall(r'Bearer\\s+([A-Za-z0-9_.-]+)',text,re.I))
+        tokens=set(re.findall(r'Bearer\s+([A-Za-z0-9_.-]+)',text,re.I))
         if len(tokens)!=1: raise SystemExit('Credencial ausente ou ambígua.')
         token=tokens.pop()
     client=httpx.Client(base_url='https://api.cloudflare.com/client/v4',
