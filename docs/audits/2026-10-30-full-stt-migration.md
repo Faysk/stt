@@ -145,3 +145,18 @@ O limite de upload foi exercitado com multipart transferido em chunks sem `Conte
 O teste de rollback foi ampliado para **FastAPI + SQLite de verdade no ambiente temporário**: criar job, reivindicar lease, publicar resultado sintético por API, executar helper de rollback (dry-run e depois aplicação no fixture offline) e confirmar TXT/SRT nas duas disposições de arquivos. Isso **não é** um ensaio de produção/NTFS.
 
 **Evidência verificada:** commit `1a7d7df67eda8cffed5683f1b568bfb81716902f`, [Tests success — 57 Python + JS/PowerShell/Worker dry-run](https://github.com/Faysk/tts/actions/runs/41057612418), [Security audit success](https://github.com/Faysk/tts/actions/runs/41057612526). Nenhum PR foi mesclado, nenhum dado privado foi lido e nenhum recurso Cloudflare ativo foi alterado. Bloqueios externos continuam listados na **[#28](https://github.com/Faysk/tts/issues/28)**, e a decisão de produção segue **NO-GO** sem #19.
+
+
+## 11. Durabilidade e media preflight — atualização do PR #31
+
+O [draft PR #31](https://github.com/Faysk/tts/pull/31) avançou na segurança de arquivos e execução:
+
+- **Outbox:** após sincronizar bytes do JSON e fazer `rename`, o worker sincroniza também o diretório pai em POSIX. Isso reduz o risco de perder o registro do resultado após falha de energia entre o rename e o commit do diretório.
+- **Geração de resultado:** a primeira criação de `results/` também sincroniza a entrada do diretório pai antes de o SQLite apontar para a geração, e links simbólicos no caminho de resultados são rejeitados.
+- **Rollback:** recusa exportações flat existentes que não tenham os mesmos bytes da geração confirmada; verifica SHA-256 do staging e recusa destino criado por outra operação durante a cópia, evitando substituir uma transcrição potencialmente única.
+- **Qwen:** toda a mídia, inclusive sua duração efetivamente decodificada, é examinada em streaming **antes de importar Torch/Transformers, reservar VRAM ou carregar pesos**. Um vídeo >7200 s, vazio, sem áudio ou inválido é rejeitado antes de consumir GPU. Métrica `media_probe_s` explicita o custo de decode extra.
+- **Criação de jobs:** erro de filesystem em `mkdir` não deve criar um trabalho de YouTube sem workspace nem excluir diretório que não foi criado pelo upload atual.
+
+Os testes simulam falhas, duração falsa e diretórios divergentes, **mas não substituem ensaios reais de energia/NTFS/GPU**.
+
+**Evidência do commit `af394fb4b28de66bf293462b6a0049d7424aac4c`:** [Tests 67/67 Python e JS/PowerShell/build Worker aprovados](https://github.com/Faysk/tts/actions/runs/41059872592), [Security audit success](https://github.com/Faysk/tts/actions/runs/41059872473). Sem produção, sem merge e sem dados privados usados. As tarefas humanas pendentes foram pormenorizadas na [#28](https://github.com/Faysk/tts/issues/28).
