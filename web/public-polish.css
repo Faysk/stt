@@ -413,3 +413,136 @@
   .public-page input,
   .public-page select { transition: none !important; animation: none !important; }
 }
+
+/*
+ * Language picker — CSS-only progressive enhancement.
+ * Chromium 135+ / Safari 27+ can style the actual popup using base-select;
+ * Firefox/older browsers retain a native, accessible dropdown.
+ */
+.public-page .language-picker {
+  gap: 7px;
+  color: #92aecf;
+}
+.public-page .language-picker > span[aria-hidden] {
+  font-size: 15px;
+  line-height: 1;
+  color: #8fb8e6;
+}
+.public-page .language-picker select {
+  inline-size: min(178px, 42vw);
+  max-inline-size: none;
+  min-inline-size: 124px;
+  min-block-size: 40px;
+  padding: 8px 12px;
+  border: 1px solid #3a4b63;
+  border-radius: 9px;
+  background: #141c29;
+  color: #e4edf9;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.4;
+  cursor: pointer;
+}
+.public-page .language-picker select:hover {
+  border-color: #6085af;
+  background: #1a2637;
+}
+.public-page .language-picker select:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+  border-color: #75b5ff;
+}
+@supports (appearance: base-select) {
+  /* Touch devices keep the familiar OS picker and its larger native targets. */
+  @media (hover: hover) and (pointer: fine) {
+    .public-page .language-picker select,
+    .public-page .language-picker select::picker(select) {
+      appearance: base-select;
+    }
+    .public-page .language-picker select {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .public-page .language-picker select::picker-icon {
+      content: "";
+      flex: 0 0 7px;
+      inline-size: 7px;
+      block-size: 7px;
+      margin-inline-start: auto;
+      border-right: 1.6px solid #93aed0;
+      border-bottom: 1.6px solid #93aed0;
+      transform: translateY(-2px) rotate(45deg);
+      transition: transform 160ms ease, border-color 160ms ease;
+    }
+    .public-page .language-picker select:open {
+      border-color: #6aa7ea;
+      background: #192639;
+      box-shadow: 0 0 0 2px #62adff1a;
+    }
+    .public-page .language-picker select:open::picker-icon {
+      transform: translateY(2px) rotate(225deg);
+      border-color: #9fceff;
+    }
+    .public-page .language-picker select::picker(select) {
+      min-inline-size: 204px;
+      max-inline-size: calc(100vw - 24px);
+      max-block-size: min(436px, calc(100dvh - 96px));
+      overflow-y: auto;
+      margin-block-start: 7px;
+      padding: 6px;
+      border: 1px solid #405370;
+      border-radius: 11px;
+      background: #151d29;
+      color: #e7eef9;
+      box-shadow: 0 18px 44px #0008, 0 2px 9px #0004;
+      scrollbar-width: thin;
+      scrollbar-color: #435d80 #151d29;
+      overscroll-behavior: contain;
+    }
+    .public-page .language-picker option {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      min-block-size: 38px;
+      margin: 1px 0;
+      padding: 9px 11px;
+      border-radius: 7px;
+      background: transparent;
+      color: #d8e3f2;
+      font: 500 12px/1.5 "Segoe UI Variable", "Segoe UI", Arial, sans-serif;
+      text-align: start;
+      cursor: pointer;
+    }
+    .public-page .language-picker option:checked {
+      background: #263c59;
+      color: #b8dcff;
+    }
+    .public-page .language-picker option:hover,
+    .public-page .language-picker option:focus {
+      background: #304661;
+      color: #f2f7ff;
+    }
+    .public-page .language-picker option::checkmark {
+      content: "✓";
+      order: 1;
+      margin-inline-start: auto;
+      color: #8ac3ff;
+      font-size: 13px;
+    }
+  }
+}
+@media (max-width: 620px) {
+  .public-page .language-picker > span[aria-hidden] {
+    display: none;
+  }
+  .public-page .language-picker select {
+    min-block-size: 44px;
+    padding-inline: 10px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .public-page .language-picker select::picker-icon {
+    transition: none;
+  }
+}
