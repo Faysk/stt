@@ -19,7 +19,7 @@ sys.path.insert(0,str(Path(__file__).resolve().parents[2]))
 
 @pytest.fixture
 def lab(tmp_path,monkeypatch):
-    for key,value in {'TTS_DATA':str(tmp_path),'TTS_ADMIN_KEY':'audit-admin','TTS_WORKER_KEY':'audit-worker','TTS_EDGE_KEY':'audit-edge','TTS_REQUIRE_EDGE':'0','TTS_URL':'http://example.invalid','TTS_TMP':str(tmp_path)}.items():
+    for key,value in {'STT_DATA':str(tmp_path),'STT_ADMIN_KEY':'audit-admin','STT_WORKER_KEY':'audit-worker','STT_EDGE_KEY':'audit-edge','STT_REQUIRE_EDGE':'0','STT_URL':'http://example.invalid','STT_TMP':str(tmp_path)}.items():
         monkeypatch.setenv(key,value)
     with patch('dotenv.load_dotenv',lambda *a,**k:False):
         import server.app as module

@@ -73,10 +73,10 @@ def main():
     if not (1<=args.repeat<=20): p.error('repeat must be between 1 and 20')
     if args.engine=='qwen3' and args.model not in RECIPES:
         p.error('unknown Qwen recipe')
-    runtime=sys.executable if args.engine=='whisper' else os.getenv('TTS_QWEN_PYTHON','')
+    runtime=sys.executable if args.engine=='whisper' else os.getenv('STT_QWEN_PYTHON','')
     if not runtime or not Path(runtime).is_file() or (
        args.engine=='qwen3' and Path(runtime).resolve()==Path(sys.executable).resolve()):
-        p.error('Qwen requires an independent TTS_QWEN_PYTHON executable')
+        p.error('Qwen requires an independent STT_QWEN_PYTHON executable')
     root=Path(__file__).resolve().parents[1]
     samples=list(manifest_samples(args.dataset))
     output=[]

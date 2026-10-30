@@ -17,14 +17,14 @@ from server.observability import package_versions
 from server.config import getenv, required
 
 load_dotenv()
-BASE = getenv('TTS_URL','http://127.0.0.1:8765').rstrip('/')
-HEADERS = {'x-worker-key':required('TTS_WORKER_KEY'),'x-edge-key':getenv('TTS_EDGE_KEY','')}
-IDENTITY = getenv('TTS_WORKER_ID','notebook')
+BASE = getenv('STT_URL','http://127.0.0.1:8765').rstrip('/')
+HEADERS = {'x-worker-key':required('STT_WORKER_KEY'),'x-edge-key':getenv('STT_EDGE_KEY','')}
+IDENTITY = getenv('STT_WORKER_ID','notebook')
 client = httpx.Client(base_url=BASE,headers=HEADERS,timeout=60)
 
 ROOT = Path(__file__).resolve().parents[1]
 MAX_MEDIA_BYTES = 90 * 1024**2
-OUTBOX = Path(getenv('TTS_OUTBOX', str(ROOT / 'worker-outbox'))).resolve()
+OUTBOX = Path(getenv('STT_OUTBOX', str(ROOT / 'worker-outbox'))).resolve()
 
 def _outbox_path(job):
     name = ''.join(c for c in job['id'] if c.isalnum() or c in '-_')[:80]
@@ -187,7 +187,7 @@ def _stop_child(proc):
         except (OSError,AttributeError): pass
 
 def _qwen_models():
-    runtime = getenv('TTS_QWEN_PYTHON','')
+    runtime = getenv('STT_QWEN_PYTHON','')
     if not runtime or not Path(runtime).is_file():
         return []
     if Path(runtime).resolve() == Path(sys.executable).resolve():
@@ -199,7 +199,7 @@ def _engine_command(job,config):
     if job.get('engine','whisper') == 'whisper':
         return [sys.executable,'-m','server.infer',str(config)]
     if job['engine'] == 'qwen3':
-        runtime = getenv('TTS_QWEN_PYTHON','')
+        runtime = getenv('STT_QWEN_PYTHON','')
         if not runtime or not Path(runtime).is_file() or Path(runtime).resolve()==Path(sys.executable).resolve():
             raise RuntimeError('QWEN_RUNTIME_UNAVAILABLE')
         if job['model'] not in _qwen_models():
@@ -235,13 +235,13 @@ def execute(job):
         # Never inherit tempfile.tempdir: the API changes it for multipart
         # spooling, and an earlier API/test lifecycle can leave it stale.
         # Worker inference needs an independent, persistent parent directory.
-        temp_root = Path(getenv('TTS_TMP') or str(ROOT / 'worker-tmp'))
+        temp_root = Path(getenv('STT_TMP') or str(ROOT / 'worker-tmp'))
         if temp_root.is_symlink():
             raise OSError('Untrusted worker temporary directory')
         temp_root.mkdir(parents=True, exist_ok=True, mode=0o700)
         if not temp_root.is_dir():
             raise OSError('Worker temporary path is not a directory')
-        with tempfile.TemporaryDirectory(prefix='tts-',dir=str(temp_root)) as temp:
+        with tempfile.TemporaryDirectory(prefix='stt-',dir=str(temp_root)) as temp:
             folder = Path(temp)
             progress_file=folder/'progress.json'
             config = folder/'job.json'

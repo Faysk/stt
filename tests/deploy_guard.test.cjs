@@ -14,7 +14,7 @@ assert.match(result.stderr,/STT deployment blocked/);
 assert.match(result.stderr,/explicit operator approval/);
 // A partial acknowledgement still must never reach the provider.
 const partial=spawnSync(process.execPath,[path.join(root,'scripts/deploy-stt.mjs')],{
- cwd:root,encoding:'utf8',env:{...process.env,CI:'',STT_APPROVED_CUTOVER:'stt.faysk.dev',STT_APPROVED_WORKER:'faysk-tts'}
+ cwd:root,encoding:'utf8',env:{...process.env,CI:'',STT_APPROVED_CUTOVER:'stt.faysk.dev',STT_APPROVED_WORKER:'wrong-worker'}
 });
 assert.equal(partial.status,2);
 console.log('Deploy guard: implicit/incorrect Worker deployment safely denied.');

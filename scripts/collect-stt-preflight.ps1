@@ -43,7 +43,7 @@ if (Get-Command Get-NetTCPConnection -ErrorAction SilentlyContinue) {
 }
 $domains = [ordered]@{}
 if (-not $SkipDns -and (Get-Command Resolve-DnsName -ErrorAction SilentlyContinue)) {
-    foreach ($domain in @('tts.faysk.dev','stt.faysk.dev','tts-origin.faysk.dev','stt-origin.faysk.dev')) {
+    foreach ($domain in @('stt.faysk.dev','stt-origin.faysk.dev')) {
         try {
             $answers = @(Resolve-DnsName -Name $domain -ErrorAction Stop |
                 Where-Object { $_.Type -in @('A','AAAA','CNAME') } |

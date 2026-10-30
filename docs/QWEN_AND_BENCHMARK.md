@@ -1,7 +1,7 @@
 # Motores, resultados e benchmarks (preview de 30/10/2026)
 
 Este documento descreve a **branch experimental**, não o estado atualmente
-publicado em `tts.faysk.dev`. Não executar instalação nem copiar pesos para o
+publicado em `stt.faysk.dev`. Não executar instalação nem copiar pesos para o
 ambiente `faster-whisper` existente. O código Qwen está atrás de uma seleção
 **manual** de motor e do anúncio de capacidade do worker.
 
@@ -33,7 +33,7 @@ A receita de ambiente está em `runtime/qwen3-windows-x64.json`.
 
 **Não há download automático de pesos.** O operador deve obter os ficheiros
 do commit fixado, obedecer às respetivas licenças e armazená-los em
-`TTS_QWEN_MODELS/<directory>` com `model-revision.json` contendo o mesmo
+`STT_QWEN_MODELS/<directory>` com `model-revision.json` contendo o mesmo
 `repository` e `revision`. Esse manifesto é uma declaração de proveniência
 local, **não valida criptograficamente** os bytes dos pesos; falta aceitar uma
 verificação integral com hash/manifest no hardware de destino.
@@ -47,8 +47,8 @@ py -3.12 -m venv .venv-qwen
 # Consulte runtime/qwen3-windows-x64.json para versões fixadas.
 # Instale o Torch CUDA compatível usando o índice oficial do PyTorch,
 # e as demais bibliotecas NO AMBIENTE QWEN, nunca no uv.lock do Whisper.
-$env:TTS_QWEN_PYTHON = (Resolve-Path '.\.venv-qwen\Scripts\python.exe').Path
-$env:TTS_QWEN_MODELS = 'E:\Models\qwen'
+$env:STT_QWEN_PYTHON = (Resolve-Path '.\.venv-qwen\Scripts\python.exe').Path
+$env:STT_QWEN_MODELS = 'E:\Models\qwen'
 ```
 
 A API mantém as opções atuais do console em Whisper. A seleção Qwen é manual
@@ -80,7 +80,7 @@ O adaptador valida o ficheiro **antes de carregar pesos na GPU**:
 3. Só depois importa Torch/Transformers, verifica CUDA/VRAM, carrega o modelo local e inicia inferência.
 4. Durante o ASR, `iter_windows()` **mantém uma segunda barreira** ao número de amostras efetivamente resampladas.
 
-A pré-decodificação pode adicionar latência e I/O: `media_probe_s` é medido separadamente, e o custo deve ser avaliado na GPU/Windows reais. Um erro de download ou decode não deve reservar VRAM para pesos do modelo. Testes sintéticos exercitam os limites e verificam que áudio inválido não chega ao Torch. **Esses testes não provam qualidade de áudio, FPS, VRAM, compatibilidade com ficheiros reais nem integridade criptográfica dos pesos**; tudo isso continua na issue [#28](https://github.com/Faysk/tts/issues/28).
+A pré-decodificação pode adicionar latência e I/O: `media_probe_s` é medido separadamente, e o custo deve ser avaliado na GPU/Windows reais. Um erro de download ou decode não deve reservar VRAM para pesos do modelo. Testes sintéticos exercitam os limites e verificam que áudio inválido não chega ao Torch. **Esses testes não provam qualidade de áudio, FPS, VRAM, compatibilidade com ficheiros reais nem integridade criptográfica dos pesos**; tudo isso continua na issue [#28](https://github.com/Faysk/stt/issues/28).
 
 ## Métricas v1
 

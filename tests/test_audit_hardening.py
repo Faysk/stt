@@ -20,11 +20,11 @@ WORKER = {'x-worker-key': 'test-worker'}
 
 @pytest.fixture
 def api(tmp_path, monkeypatch):
-    monkeypatch.setenv('TTS_DATA', str(tmp_path))
-    monkeypatch.setenv('TTS_ADMIN_KEY', 'test-admin')
-    monkeypatch.setenv('TTS_WORKER_KEY', 'test-worker')
-    monkeypatch.setenv('TTS_REQUIRE_EDGE', '0')
-    monkeypatch.setenv('TTS_OUTBOX', str(tmp_path / 'worker-outbox'))
+    monkeypatch.setenv('STT_DATA', str(tmp_path))
+    monkeypatch.setenv('STT_ADMIN_KEY', 'test-admin')
+    monkeypatch.setenv('STT_WORKER_KEY', 'test-worker')
+    monkeypatch.setenv('STT_REQUIRE_EDGE', '0')
+    monkeypatch.setenv('STT_OUTBOX', str(tmp_path / 'worker-outbox'))
     with patch('dotenv.load_dotenv', lambda *a, **kw: None):
         import server.app as mod
         mod = importlib.reload(mod)
@@ -33,8 +33,8 @@ def api(tmp_path, monkeypatch):
 
 
 def module_worker(monkeypatch, tmp_path):
-    monkeypatch.setenv('TTS_WORKER_KEY', 'test-worker')
-    monkeypatch.setenv('TTS_OUTBOX', str(tmp_path / 'outbox'))
+    monkeypatch.setenv('STT_WORKER_KEY', 'test-worker')
+    monkeypatch.setenv('STT_OUTBOX', str(tmp_path / 'outbox'))
     with patch('dotenv.load_dotenv', lambda *a, **kw: None):
         import server.worker as worker
         return importlib.reload(worker)

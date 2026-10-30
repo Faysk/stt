@@ -7,10 +7,10 @@ from fastapi.testclient import TestClient
 
 @pytest.fixture
 def setup(tmp_path,monkeypatch):
-    monkeypatch.setenv('TTS_DATA',str(tmp_path))
-    monkeypatch.setenv('TTS_ADMIN_KEY','test-admin')
-    monkeypatch.setenv('TTS_WORKER_KEY','test-worker')
-    monkeypatch.setenv('TTS_REQUIRE_EDGE','0')
+    monkeypatch.setenv('STT_DATA',str(tmp_path))
+    monkeypatch.setenv('STT_ADMIN_KEY','test-admin')
+    monkeypatch.setenv('STT_WORKER_KEY','test-worker')
+    monkeypatch.setenv('STT_REQUIRE_EDGE','0')
     import server.app as module
     m=importlib.reload(module)
     with TestClient(m.app) as c: yield c,m
@@ -77,8 +77,8 @@ def test_queue_limits(setup):
 def test_edge_guard_and_size_limit(setup,monkeypatch):
     c,m=setup
     assert c.post('/api/jobs/upload',headers={**SESSION,'content-length':str(100*1024**2)},content=b'').status_code==413
-    monkeypatch.setenv('TTS_REQUIRE_EDGE','1')
-    monkeypatch.setenv('TTS_EDGE_KEY','edge-secret')
+    monkeypatch.setenv('STT_REQUIRE_EDGE','1')
+    monkeypatch.setenv('STT_EDGE_KEY','edge-secret')
     assert c.get('/api/health').status_code==403
     assert c.get('/api/health',headers={'x-edge-key':'edge-secret'}).status_code==200
 

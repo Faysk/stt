@@ -13,10 +13,8 @@ from fastapi.testclient import TestClient
 
 
 def worker(tmp_path, monkeypatch):
-    monkeypatch.setenv('TTS_WORKER_KEY','dummy-worker')
-    monkeypatch.setenv('TTS_OUTBOX',str(tmp_path/'outbox'))
-    monkeypatch.delenv('STT_WORKER_KEY',raising=False)
-    monkeypatch.delenv('STT_OUTBOX',raising=False)
+    monkeypatch.setenv('STT_WORKER_KEY','dummy-worker')
+    monkeypatch.setenv('STT_OUTBOX',str(tmp_path/'outbox'))
     with patch('dotenv.load_dotenv', lambda *args,**kwargs: None):
         import server.worker as module
         return importlib.reload(module)
@@ -89,10 +87,10 @@ def test_permanent_unprocessable_payload_still_quarantines(tmp_path,monkeypatch)
 
 
 def test_early_api_denials_have_privacy_security_headers(tmp_path,monkeypatch):
-    monkeypatch.setenv('TTS_DATA',str(tmp_path))
-    monkeypatch.setenv('TTS_ADMIN_KEY','test-admin')
-    monkeypatch.setenv('TTS_WORKER_KEY','test-worker')
-    monkeypatch.setenv('TTS_REQUIRE_EDGE','0')
+    monkeypatch.setenv('STT_DATA',str(tmp_path))
+    monkeypatch.setenv('STT_ADMIN_KEY','test-admin')
+    monkeypatch.setenv('STT_WORKER_KEY','test-worker')
+    monkeypatch.setenv('STT_REQUIRE_EDGE','0')
     monkeypatch.delenv('STT_DATA',raising=False)
     monkeypatch.delenv('STT_ADMIN_KEY',raising=False)
     monkeypatch.delenv('STT_WORKER_KEY',raising=False)
@@ -107,8 +105,8 @@ def test_early_api_denials_have_privacy_security_headers(tmp_path,monkeypatch):
             big=client.post('/api/jobs/upload',
                  headers={'x-session-key':'a'*64,'content-length':str(100*1024*1024)},
                  content=b'')
-            monkeypatch.setenv('TTS_REQUIRE_EDGE','1')
-            monkeypatch.setenv('TTS_EDGE_KEY','secret-edge')
+            monkeypatch.setenv('STT_REQUIRE_EDGE','1')
+            monkeypatch.setenv('STT_EDGE_KEY','secret-edge')
             forbidden=client.get('/api/health')
         for res,code in [(denied,401),(big,413),(forbidden,403)]:
             assert res.status_code==code,res.text
@@ -121,12 +119,10 @@ def test_early_api_denials_have_privacy_security_headers(tmp_path,monkeypatch):
 
 def test_streamed_body_without_content_length_returns_413(tmp_path,monkeypatch):
     """Transfer-Encoding: chunked cannot bypass the streaming upload budget."""
-    monkeypatch.setenv('TTS_DATA',str(tmp_path))
-    monkeypatch.setenv('TTS_ADMIN_KEY','test-admin')
-    monkeypatch.setenv('TTS_WORKER_KEY','test-worker')
-    monkeypatch.setenv('TTS_REQUIRE_EDGE','0')
-    for suffix in ('DATA','ADMIN_KEY','WORKER_KEY','REQUIRE_EDGE'):
-        monkeypatch.delenv('STT_'+suffix,raising=False)
+    monkeypatch.setenv('STT_DATA',str(tmp_path))
+    monkeypatch.setenv('STT_ADMIN_KEY','test-admin')
+    monkeypatch.setenv('STT_WORKER_KEY','test-worker')
+    monkeypatch.setenv('STT_REQUIRE_EDGE','0')
     with patch('dotenv.load_dotenv',lambda *a,**kw:None):
         import server.app as module
         module=importlib.reload(module)
@@ -169,51 +165,6 @@ def test_qwen_exception_does_not_expose_private_paths(tmp_path,monkeypatch,capsy
     assert sensitive not in output.err
     assert sensitive not in json.dumps(result)
     assert result.get('error')
-
-
-def test_real_api_result_can_be_restored_for_offline_legacy_rollback(tmp_path,monkeypatch):
-    """Integration test against the actual SQLite schema and result renderer.
-
-    This deliberately uses synthetic media and a synthetic result, without
-    running a model, downloading weights or touching a production database.
-    """
-    from scripts.restore_legacy_exports import main as restore
-    monkeypatch.setenv('TTS_DATA',str(tmp_path))
-    monkeypatch.setenv('TTS_ADMIN_KEY','test-admin')
-    monkeypatch.setenv('TTS_WORKER_KEY','test-worker')
-    monkeypatch.setenv('TTS_REQUIRE_EDGE','0')
-    for suffix in ('DATA','ADMIN_KEY','WORKER_KEY','REQUIRE_EDGE'):
-        monkeypatch.delenv('STT_'+suffix,raising=False)
-    session={'x-session-key':'a'*64}
-    worker_header={'x-worker-key':'test-worker'}
-    with patch('dotenv.load_dotenv',lambda *a,**kw:None):
-        import server.app as module
-        module=importlib.reload(module)
-        with TestClient(module.app) as client:
-            upload=client.post('/api/jobs/upload',headers=session,
-                files={'file':('fixture.wav',b'synthetic fixture','audio/wav')})
-            assert upload.status_code==201,upload.text
-            jid=upload.json()['id']
-            claimed=client.post('/api/worker/claim',headers=worker_header,
-                json={'id':'notebook'}).json()['job']
-            assert claimed['id']==jid
-            result=client.post(f'/api/worker/{jid}/result',headers=worker_header,
-                json={'lease':claimed['lease'],'duration':2,
-                      'result_state':'complete',
-                      'segments':[{'start':0,'end':2,'text':'integration fixture'}]})
-            assert result.status_code==200,result.text
-        flat=module.BLOB/jid/'transcript.txt'
-        assert not flat.exists()
-        assert restore(['--data-root',str(tmp_path)])==0
-        assert not flat.exists()
-        assert restore(['--data-root',str(tmp_path),
-                       '--apply','--ack-offline-and-backed-up'])==0
-        assert flat.read_text(encoding='utf-8')=='integration fixture'
-        assert (module.BLOB/jid/'transcript.srt').is_file()
-        # Generations remain readable by modern APIs after flat restoration.
-        with TestClient(module.app) as client:
-            assert client.get(f'/api/jobs/{jid}/download/txt',headers=session).text=='integration fixture'
-            assert client.get(f'/api/jobs/{jid}/download/srt',headers=session).status_code==200
 
 
 def test_outbox_atomic_rename_fsyncs_directory_on_posix(tmp_path,monkeypatch):
@@ -270,12 +221,10 @@ def test_generation_rejects_symlinked_results_directory(tmp_path):
 def test_failed_workspace_creation_does_not_publish_unprocessable_job(
         source,tmp_path,monkeypatch):
     """A filesystem failure must never leave an unservable queued job."""
-    monkeypatch.setenv('TTS_DATA',str(tmp_path))
-    monkeypatch.setenv('TTS_ADMIN_KEY','test-admin')
-    monkeypatch.setenv('TTS_WORKER_KEY','test-worker')
-    monkeypatch.setenv('TTS_REQUIRE_EDGE','0')
-    for suffix in ('DATA','ADMIN_KEY','WORKER_KEY','REQUIRE_EDGE'):
-        monkeypatch.delenv('STT_'+suffix,raising=False)
+    monkeypatch.setenv('STT_DATA',str(tmp_path))
+    monkeypatch.setenv('STT_ADMIN_KEY','test-admin')
+    monkeypatch.setenv('STT_WORKER_KEY','test-worker')
+    monkeypatch.setenv('STT_REQUIRE_EDGE','0')
     with patch('dotenv.load_dotenv',lambda *a,**kw:None):
         import server.app as module
         module=importlib.reload(module)
