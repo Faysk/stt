@@ -19,3 +19,17 @@
 .legacy-access:not([hidden]){display:grid;gap:9px;margin-bottom:16px;border:1px solid var(--line);background:var(--panel2);padding:14px 16px;border-radius:10px}
 .legacy-access p{font-size:12px;color:var(--muted);line-height:1.5}
 .legacy-access a{color:var(--accent);font-weight:600;text-decoration:underline;text-underline-offset:3px}
+
+/* Minimal, accessible key-only login; intentionally scoped to the locked state. */
+.admin-locked{background:radial-gradient(ellipse at 50% 48%,#16243b 0%,#111927 29%,#0d1118 72%)}
+.admin-locked .admin-main{min-height:100svh;padding:24px}
+.admin-locked .admin-main #admin-login{display:flex;align-items:center;gap:12px;width:min(420px,100%);max-width:none;margin:0;padding:0;border:0;border-radius:0;background:transparent;box-shadow:none}
+.admin-locked #admin-key{flex:1;min-width:0;width:100%;height:54px;padding:0 16px;border:1px solid #3b506e;border-radius:10px;background:#101827b8;color:var(--text);font-size:16px;outline:0;box-shadow:inset 0 1px 1px #ffffff08;transition:border-color .2s,box-shadow .2s}
+.admin-locked #admin-key:focus-visible{border-color:#75b5ff;box-shadow:0 0 0 3px #62adff26,0 10px 35px #0002}
+.admin-locked #login{display:grid;place-items:center;flex:0 0 54px;width:54px;height:54px;margin:0;padding:0;border:1px solid #548ef3;border-radius:10px;background:linear-gradient(145deg,#5eafff,#2f6cdb);color:#fff;box-shadow:0 6px 26px #2767d22e;transition:filter .2s,transform .2s}
+.admin-locked #login:hover{filter:brightness(1.1);transform:translateY(-1px)}
+.admin-locked #login:active{transform:translateY(0)}
+.admin-locked #login svg{display:block}
+.admin-locked #admin-message{width:min(420px,100%);max-width:none;text-align:center}
+@media(max-width:480px){.admin-locked .admin-main{padding:20px}.admin-locked .admin-main #admin-login{gap:10px}.admin-locked #admin-key,.admin-locked #login{height:50px}.admin-locked #login{flex-basis:50px;width:50px}}
+@media(prefers-reduced-motion:reduce){.admin-locked #admin-key,.admin-locked #login{transition:none}}
