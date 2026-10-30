@@ -165,7 +165,7 @@
       details.append(node('span','CPU · ' + (info.cpu || 'n/d') + ' threads','feature-pill'),
         node('span',ram,'feature-pill'),
         node('span',gpu,'feature-pill'),
-        node('span',info.gpu ? info.gpu.vram_mb + ' MB VRAM total · ' + info.gpu.free_vram_mb + ' MB livres (snapshot)' : 'CUDA não detectada','feature-pill'),
+        node('span',info.gpu ? info.gpu.vram_mb + ' MB VRAM total · ' + (info.gpu.free_vram_mb ?? 'n/d') + ' MB livres (snapshot)' : 'CUDA não detectada','feature-pill'),
         node('span',(info.models || []).length + ' modelos em cache','feature-pill'),
         node('span','CPU: ' + (types.cpu || []).join(', ') + ' / CUDA: ' + (types.cuda || []).join(', '),'feature-pill'));
       card.append(details);
