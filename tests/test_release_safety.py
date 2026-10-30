@@ -149,3 +149,23 @@ def test_streamed_body_without_content_length_returns_413(tmp_path,monkeypatch):
         # must still terminate oversized streams before route validation.
         assert r.status_code==413,r.text
         assert r.headers['cache-control']=='no-store'
+
+
+def test_qwen_exception_does_not_expose_private_paths(tmp_path,monkeypatch,capsys):
+    """A model loader can include private paths or filenames in its error."""
+    from server import qwen_engine
+    job=tmp_path/'job.json'
+    job.write_text(json.dumps({'model':'qwen-fast','source':'upload'}),encoding='utf-8')
+    sensitive='C:/private/users/secrets/never-log-me'
+
+    def reject(_):
+        raise RuntimeError('model unreadable: '+sensitive)
+
+    monkeypatch.setattr(qwen_engine,'model_directory',reject)
+    qwen_engine.run(str(job))
+    output=capsys.readouterr()
+    result=json.loads((tmp_path/'result.json').read_text(encoding='utf-8'))
+    assert 'RuntimeError' in output.err
+    assert sensitive not in output.err
+    assert sensitive not in json.dumps(result)
+    assert result.get('error')
