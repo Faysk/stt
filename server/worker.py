@@ -300,7 +300,9 @@ def worker_capabilities():
     now=time.time()
     if _CAPS_CACHE[1] is not None and now-_CAPS_CACHE[0] < 90:
         return _CAPS_CACHE[1]
+    import psutil
     caps={'system':platform.system(),'machine':platform.machine(),
+          'ram_total_mb':round(psutil.virtual_memory().total/1024**2),
           'cpu':os.cpu_count(),'engine':'faster-whisper',
           'qwen_models':_qwen_models(),'versions':package_versions(),
           'compute_types':{'cpu':[],'cuda':[]},'models':[]}
@@ -311,11 +313,12 @@ def worker_capabilities():
         pass
     try:
         flags={'creationflags':subprocess.CREATE_NO_WINDOW} if os.name=='nt' else {}
-        response=subprocess.run(['nvidia-smi','--query-gpu=name,memory.total','--format=csv,noheader,nounits'],
+        response=subprocess.run(['nvidia-smi','--query-gpu=name,memory.total,memory.free','--format=csv,noheader,nounits'],
                                 capture_output=True,text=True,timeout=3,**flags)
         if response.returncode==0 and response.stdout.strip():
             fields=[part.strip() for part in response.stdout.splitlines()[0].split(',')]
-            caps['gpu']={'name':fields[0][:120],'vram_mb':int(float(fields[1]))}
+            caps['gpu']={'name':fields[0][:120],'vram_mb':int(float(fields[1])),
+                         'free_vram_mb':int(float(fields[2]))}
             try:
                 import ctranslate2
                 caps['compute_types']['cuda']=sorted(ctranslate2.get_supported_compute_types('cuda'))
