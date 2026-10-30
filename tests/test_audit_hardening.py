@@ -236,3 +236,39 @@ def test_qwen_incremental_audio_and_network_budgets(monkeypatch):
     qwen.enforce_download_progress({'downloaded_bytes': 10})
     with pytest.raises(qwen.EngineError, match='QWEN_DOWNLOAD_TOO_LARGE'):
         qwen.enforce_download_progress({'downloaded_bytes': 11})
+
+
+def test_operational_privacy_retention_and_five_year_cleanup(api):
+    client, mod = api
+    now = time.time()
+    stale = submit(client)
+    ancient = submit(client)
+    thirty_one_days = now - 31 * mod.TTL
+    older_than_five_years = now - 5 * 365 * mod.TTL - mod.TTL
+    with mod.db() as db:
+        db.execute("""UPDATE jobs SET created=?,expires=?,client_tag='session-pseudonym',
+                   network_tag='network-pseudonym',ui_language='pt' WHERE id=?""",
+                   (thirty_one_days - 3600, thirty_one_days, stale))
+        db.execute("""UPDATE jobs SET created=?,expires=?,status='expired',
+                   purged_at=? WHERE id=?""",
+                   (older_than_five_years - 3600, older_than_five_years,
+                    older_than_five_years, ancient))
+        db.execute('UPDATE events SET at=? WHERE job=?', (thirty_one_days, stale))
+        # Daily aggregates are intentionally retained for 5 years, not forever.
+        mod.obs.record(db, 'test-history', 10, 10, None, 10, 0,
+                       now=older_than_five_years)
+    # The ancient row is marked physically purged in the fixture.
+    import shutil
+    shutil.rmtree(mod.BLOB / ancient)
+    mod.maintenance()
+    with mod.db() as db:
+        row = db.execute('SELECT status,owner,client_tag,network_tag,ui_language FROM jobs WHERE id=?',
+                         (stale,)).fetchone()
+        assert row is not None and row['status'] == 'expired'
+        assert row['owner'] == ''
+        assert row['client_tag'] is None and row['network_tag'] is None
+        assert row['ui_language'] is None
+        assert db.execute('SELECT count(*) FROM events WHERE job=?', (stale,)).fetchone()[0] == 0
+        assert db.execute('SELECT count(*) FROM jobs WHERE id=?', (ancient,)).fetchone()[0] == 0
+        assert db.execute('SELECT count(*) FROM telemetry WHERE bucket<?',
+                          (now - mod.AGGREGATE_RETENTION,)).fetchone()[0] == 0
