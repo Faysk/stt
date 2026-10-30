@@ -232,6 +232,10 @@
     enhanceWorkers();
     renderDevices();
     renderPrecisions();
+    $('config-summary').textContent = (dirty ? '● Alterações pendentes · ' : '✓ Configuração ativa · ') +
+      $('worker').value + ' / ' + $('model').value + ' / ' +
+      ($('device').value === 'cuda' ? 'GPU' : 'CPU') + ' / ' + $('compute').value;
+    $('config-summary').classList.toggle('has-pending',dirty);
     if (selector) document.querySelector(selector)?.focus({preventScroll:true});
   };
   // Native selects remain keyboard-accessible; visual cards reflect their values.
@@ -309,10 +313,23 @@
       $('usage').classList.remove('is-fetching');
     }
   };
+  const originalLogin = $('login').onclick;
+  $('login').onclick = () => {
+    if (!$('admin-key').value.trim()) {
+      $('admin-message').textContent = 'Informe a chave de administração.';
+      return;
+    }
+    $('login').classList.add('is-loading');
+    $('admin-message').textContent = 'Autenticando e carregando o console...';
+    originalLogin();
+  };
   const originalRefresh = refresh;
   refresh = async function(...args) {
     $('refresh').classList.add('is-loading');
     try { return await originalRefresh(...args); }
-    finally { $('refresh').classList.remove('is-loading'); }
+    finally {
+      $('refresh').classList.remove('is-loading');
+      $('login').classList.remove('is-loading');
+    }
   };
 })();
