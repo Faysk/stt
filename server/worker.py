@@ -14,16 +14,17 @@ from pathlib import Path
 import httpx
 from dotenv import load_dotenv
 from server.observability import package_versions
+from server.config import getenv, required
 
 load_dotenv()
-BASE = os.getenv('TTS_URL','http://127.0.0.1:8765').rstrip('/')
-HEADERS = {'x-worker-key':os.environ['TTS_WORKER_KEY'],'x-edge-key':os.getenv('TTS_EDGE_KEY','')}
-IDENTITY = os.getenv('TTS_WORKER_ID','notebook')
+BASE = getenv('TTS_URL','http://127.0.0.1:8765').rstrip('/')
+HEADERS = {'x-worker-key':required('TTS_WORKER_KEY'),'x-edge-key':getenv('TTS_EDGE_KEY','')}
+IDENTITY = getenv('TTS_WORKER_ID','notebook')
 client = httpx.Client(base_url=BASE,headers=HEADERS,timeout=60)
 
 ROOT = Path(__file__).resolve().parents[1]
 MAX_MEDIA_BYTES = 90 * 1024**2
-OUTBOX = Path(os.getenv('TTS_OUTBOX', str(ROOT / 'worker-outbox'))).resolve()
+OUTBOX = Path(getenv('TTS_OUTBOX', str(ROOT / 'worker-outbox'))).resolve()
 
 def _outbox_path(job):
     name = ''.join(c for c in job['id'] if c.isalnum() or c in '-_')[:80]
@@ -167,7 +168,7 @@ def _stop_child(proc):
         except (OSError,AttributeError): pass
 
 def _qwen_models():
-    runtime = os.getenv('TTS_QWEN_PYTHON','')
+    runtime = getenv('TTS_QWEN_PYTHON','')
     if not runtime or not Path(runtime).is_file():
         return []
     if Path(runtime).resolve() == Path(sys.executable).resolve():
@@ -179,7 +180,7 @@ def _engine_command(job,config):
     if job.get('engine','whisper') == 'whisper':
         return [sys.executable,'-m','server.infer',str(config)]
     if job['engine'] == 'qwen3':
-        runtime = os.getenv('TTS_QWEN_PYTHON','')
+        runtime = getenv('TTS_QWEN_PYTHON','')
         if not runtime or not Path(runtime).is_file() or Path(runtime).resolve()==Path(sys.executable).resolve():
             raise RuntimeError('QWEN_RUNTIME_UNAVAILABLE')
         if job['model'] not in _qwen_models():
@@ -212,7 +213,7 @@ def execute(job):
     thread.start()
     try:
         check_budget()
-        with tempfile.TemporaryDirectory(prefix='tts-',dir=os.getenv('TTS_TMP')) as temp:
+        with tempfile.TemporaryDirectory(prefix='tts-',dir=getenv('TTS_TMP')) as temp:
             folder = Path(temp)
             progress_file=folder/'progress.json'
             config = folder/'job.json'
