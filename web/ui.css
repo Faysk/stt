@@ -200,3 +200,16 @@
 @media(prefers-reduced-motion:reduce) {
   .admin-page .skeleton-bar,.admin-page .is-fetching > .section-heading::after {animation:none!important}
 }
+
+.admin-page .config-summary {
+  display:flex;align-items:center;min-height:36px;
+  margin:1px 0 15px;
+  padding:9px 12px;border:1px solid #334b65;
+  border-radius:7px;background:#142032;
+  color:#a9ccef;font:11px/1.6 Consolas,monospace;overflow-wrap:anywhere;
+}
+.admin-page .config-summary.has-pending {border-color:#88734b;color:#e4c88e;background:#30271944}
+.admin-page .config-advanced {margin:0 0 16px;border:1px solid #2b394f;border-radius:7px;padding:8px 12px}
+.admin-page .config-advanced summary {cursor:pointer;color:#93b8e6;font-size:11px;outline-offset:4px}
+.admin-page .config-advanced[open] summary {margin-bottom:14px}
+.admin-page .config-advanced summary:focus-visible {outline:2px solid #73b0ff}
