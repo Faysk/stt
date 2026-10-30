@@ -264,3 +264,37 @@ def test_generation_rejects_symlinked_results_directory(tmp_path):
     with pytest.raises(OSError,match='Unsafe result storage directory'):
         mod._publish_generation(folder,'a'*64,{'txt':'must not escape'})
     assert list(outside.iterdir())==[]
+
+
+@pytest.mark.parametrize('source',['upload','youtube'])
+def test_failed_workspace_creation_does_not_publish_unprocessable_job(
+        source,tmp_path,monkeypatch):
+    """A filesystem failure must never leave an unservable queued job."""
+    monkeypatch.setenv('TTS_DATA',str(tmp_path))
+    monkeypatch.setenv('TTS_ADMIN_KEY','test-admin')
+    monkeypatch.setenv('TTS_WORKER_KEY','test-worker')
+    monkeypatch.setenv('TTS_REQUIRE_EDGE','0')
+    for suffix in ('DATA','ADMIN_KEY','WORKER_KEY','REQUIRE_EDGE'):
+        monkeypatch.delenv('STT_'+suffix,raising=False)
+    with patch('dotenv.load_dotenv',lambda *a,**kw:None):
+        import server.app as module
+        module=importlib.reload(module)
+        with TestClient(module.app) as client:
+            original=module.Path.mkdir
+            def no_workspace(path,*args,**kwargs):
+                if path.parent==module.BLOB and path.name!='.tmp':
+                    raise OSError('synthetic disk failure')
+                return original(path,*args,**kwargs)
+            monkeypatch.setattr(module.Path,'mkdir',no_workspace)
+            with pytest.raises(OSError,match='synthetic disk failure'):
+                if source=='upload':
+                    client.post('/api/jobs/upload',
+                                headers={'x-session-key':'a'*64},
+                                files={'file':('fixture.wav',b'dummy','audio/wav')})
+                else:
+                    client.post('/api/jobs/youtube',
+                                headers={'x-session-key':'a'*64},
+                                json={'url':'https://www.youtube.com/watch?v=dQw4w9WgXcQ'})
+            with module.db() as conn:
+                assert conn.execute('SELECT COUNT(*) FROM jobs').fetchone()[0]==0
+            assert list(module.BLOB.glob('[0-9a-f]'*32))==[]
