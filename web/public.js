@@ -18,8 +18,56 @@ $('file').onchange=e=>select(e.target.files[0]);$('drop').onkeydown=e=>{if(e.key
 for(const event of ['dragenter','dragover'])$('drop').addEventListener(event,e=>{e.preventDefault();$('drop').classList.add('drag')});
 for(const event of ['dragleave','drop'])$('drop').addEventListener(event,e=>{e.preventDefault();$('drop').classList.remove('drag')});
 $('drop').addEventListener('drop',e=>select(e.dataTransfer.files[0]));
-function upload(file){return new Promise((resolve,reject)=>{const xhr=new XMLHttpRequest();xhr.open('POST','/api/jobs/upload');xhr.setRequestHeader('x-session-key',key);xhr.setRequestHeader('x-ui-language',locale);xhr.timeout=300000;xhr.upload.onprogress=e=>{if(e.lengthComputable){const n=Math.round(e.loaded/e.total*100);$('upload-progress').value=n;message(`${t('uploading')} · ${n}%`)}};xhr.onload=()=>{if(xhr.status===201)resolve();else{let detail='';try{detail=JSON.parse(xhr.responseText).detail||''}catch{}reject(Error(failure(xhr.status,detail)))}};xhr.onerror=()=>reject(Error(t('network')));xhr.ontimeout=()=>reject(Error(t('timeout')));const data=new FormData();data.append('file',file);xhr.send(data)})}
-$('submit').onclick=async()=>{if(busy)return;if(mode==='file'&&!selected){message(t('select'),true);return}if(mode==='link'&&!$('url').value.trim()){message(t('paste'),true);return}busy=true;$('submit').disabled=true;message(t(mode==='file'?'uploading':'preparing')+'…');$('upload-progress').hidden=mode!=='file';try{if(mode==='file'){await upload(selected);selected=null;$('file').value='';$('file-label').textContent=t('drop')}else{await api('/api/jobs/youtube',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({url:$('url').value.trim()})});$('url').value=''}message(t('sent'));await refresh();$('library').scrollIntoView({behavior:'smooth',block:'start'})}catch(e){message(e.message||t('error'),true)}finally{busy=false;$('submit').disabled=false;$('upload-progress').hidden=true}};
+function setUploadMeter(value){
+ const native=$('upload-progress'),visual=$('upload-visual'),fill=$('upload-fill'),percent=$('upload-percent');
+ if(value===null){
+  visual.dataset.mode='indeterminate';native.removeAttribute('value');percent.hidden=true;fill.style.width='0%';return;
+ }
+ const n=Math.max(0,Math.min(100,Math.round(value)));
+ visual.dataset.mode='determinate';native.value=n;fill.style.width=n+'%';percent.textContent=n+'%';percent.hidden=false;
+}
+function upload(file){return new Promise((resolve,reject)=>{
+ const xhr=new XMLHttpRequest();let previous=-1;
+ xhr.open('POST','/api/jobs/upload');xhr.setRequestHeader('x-session-key',key);xhr.setRequestHeader('x-ui-language',locale);xhr.timeout=300000;
+ xhr.upload.onprogress=e=>{
+  if(!e.lengthComputable){setUploadMeter(null);return}
+  const n=Math.round(e.loaded/e.total*100);
+  if(n!==previous){previous=n;setUploadMeter(n)}
+ };
+ xhr.onload=()=>{
+  if(xhr.status===201){setUploadMeter(100);resolve()}
+  else{let detail='';try{detail=JSON.parse(xhr.responseText).detail||''}catch{}reject(Error(failure(xhr.status,detail)))}
+ };
+ xhr.onerror=()=>reject(Error(t('network')));
+ xhr.ontimeout=()=>reject(Error(t('timeout')));
+ const data=new FormData();data.append('file',file);xhr.send(data);
+})}
+$('submit').onclick=async()=>{
+ if(busy)return;
+ if(mode==='file'&&!selected){message(t('select'),true);return}
+ if(mode==='link'&&!$('url').value.trim()){message(t('paste'),true);return}
+ busy=true;$('submit').disabled=true;
+ const uploadPanel=document.querySelector('.upload-panel');
+ uploadPanel.classList.add('is-busy');
+ $('upload-visual').hidden=false;$('upload-progress').hidden=false;
+ setUploadMeter(mode==='file'?0:null);
+ message(t(mode==='file'?'uploading':'preparing')+'…');
+ try{
+  if(mode==='file'){
+   await upload(selected);selected=null;$('file').value='';$('file-label').textContent=t('drop');
+  }else{
+   await api('/api/jobs/youtube',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({url:$('url').value.trim()})});
+   $('url').value='';
+  }
+  message(t('sent'));
+  await refresh();
+  $('library').scrollIntoView({behavior:'smooth',block:'start'});
+ }catch(e){message(e.message||t('error'),true)}
+ finally{
+  busy=false;$('submit').disabled=false;uploadPanel.classList.remove('is-busy');
+  $('upload-progress').hidden=true;$('upload-visual').hidden=true;
+ }
+};
 function date(n){return new Date(n*1000).toLocaleString(locale,{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'})}
 function duration(n){if(!n)return '—';const m=Math.floor(n/60);return m?`${m} ${t('minutes')} ${Math.round(n%60)} ${t('seconds')}`:`${Math.round(n)} ${t('seconds')}`}
 async function download(id,fmt){try{const r=await api(`/api/jobs/${id}/download/${fmt}`);const url=URL.createObjectURL(await r.blob());const a=el('a');a.href=url;const title=jobs.find(j=>j.id===id)?.title||'transcript';const filename=title.replace(/\.[a-z0-9]{2,5}$/i,'').replace(/[<>:"/\\|?*\u0000-\u001f]/g,'_').slice(0,120).trim()||'transcript';a.download=`${filename}.${fmt}`;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000)}catch(e){message(e.message,true)}}
@@ -47,24 +95,123 @@ async function readTranscript(j,button){
   currentTranscript=data.text;readerData=structured;readerMode=structured.timing==='none'?'plain':'timeline';const timelineButton=document.querySelector('[data-reader-mode="timeline"]');timelineButton.disabled=structured.timing==='none';timelineButton.title=structured.timing==='none'?'Timestamps unavailable for this model':'';$('preview-title').textContent=j.title||t('read');$('reader-meta').textContent=[duration(j.duration),structured.language?.toUpperCase()].filter(Boolean).join(' · ');$('copy').textContent=t('copy');renderReader();$('preview').showModal();$('preview-text').scrollTop=0;
  }catch(e){message(e.message,true)}finally{button.disabled=false}
 }
-function render(){
- const query=$('search').value.toLocaleLowerCase();const signature=JSON.stringify([jobs,locale,filter,query]);if(signature===renderSignature)return;renderSignature=signature;
- const visible=jobs.filter(j=>(filter==='all'||filter==='active'&&['queued','running','uploading'].includes(j.status)||filter===j.status)&&(j.title||'').toLocaleLowerCase().includes(query));
- $('count').textContent=jobs.length;$('library-count').textContent=jobs.length;$('jobs').replaceChildren();
- if(!visible.length){const e=el('div','empty');e.append(el('span','empty-mark','≋'),el('strong','',t(jobs.length?'noMatch':'empty')),el('p','muted',t('emptyHint')));$('jobs').append(e);return}
- for(const j of visible){
-  const card=el('article','transcript-card');const head=el('div','transcript-card-head');const icon=el('span','file-symbol',j.title==='YouTube'||j.title?.includes('YouTube')?'↗':'≋');const info=el('div','transcript-info');const name=el('strong','transcript-title',j.title||'Transcript');info.append(name,el('span','transcript-date',date(j.created)));head.append(icon,info);card.append(head);
-  const state=el('span',`badge state-${j.status}`,t(j.status==='done'?'readyState':j.status==='running'?(j.stage||'transcribing'):j.status));if(j.status==='queued'&&j.position)state.append(document.createTextNode(` · #${j.position}`));if(j.status==='running'&&j.progress>0)state.append(document.createTextNode(` · ${Math.round(j.progress)}%`));
-  const meta=el('div','transcript-card-meta');meta.append(state,el('span','',duration(j.duration)),el('span','expiry',`${t('expires')} ${date(j.expires)}`));card.append(meta);
-  if(j.status==='failed')card.append(el('p','error small',t('error')));
-  if(j.status==='done'){
-   const actions=el('div','transcript-card-actions');const read=el('button','button read-button',t('read')+' ↗');read.onclick=()=>readTranscript(j,read);
-   const formats=el('div','download-formats');formats.setAttribute('role','group');formats.setAttribute('aria-label',t('download'));
-   for(const format of (j.timing==='none'?['txt','md','json']:['txt','md','srt','json'])){const down=el('button','format-button',format.toUpperCase());down.title=`${t('download')} ${format.toUpperCase()}`;down.setAttribute('aria-label',`${t('download')} ${format.toUpperCase()}`);down.onclick=async()=>{down.disabled=true;try{await download(j.id,format)}finally{down.disabled=false}};formats.append(down)}
-   actions.append(read,formats);card.append(actions);
-  }
-  $('jobs').append(card);
+function makeJobCard(j){
+ const card=el('article','transcript-card');card.dataset.jobId=j.id;
+ const head=el('div','transcript-card-head');
+ const icon=el('span','file-symbol');
+ const info=el('div','transcript-info');
+ info.append(el('strong','transcript-title'),el('span','transcript-date'));
+ head.append(icon,info);
+ const meta=el('div','transcript-card-meta');
+ meta.append(el('span','badge'),el('span','job-duration'),el('span','expiry'));
+ const activity=el('div','job-activity');activity.hidden=true;
+ const track=el('span','job-activity-track');
+ track.append(el('span','job-activity-fill'));activity.append(track);
+ card.append(head,meta,activity);
+ return card;
+}
+function updateJobCard(card,j){
+ const prior=card.dataset.status;
+ card.dataset.status=j.status;
+ card.querySelector('.file-symbol').textContent=j.title==='YouTube'||j.title?.includes('YouTube')?'↗':'≋';
+ card.querySelector('.transcript-title').textContent=j.title||'Transcript';
+ card.querySelector('.transcript-date').textContent=date(j.created);
+ const meta=card.querySelector('.transcript-card-meta');
+ const stateText=t(j.status==='done'?'readyState':j.status==='running'?(j.stage||'transcribing'):j.status)
+  +(j.status==='queued'&&j.position?' · #'+j.position:'')
+  +(j.status==='running'&&Number.isFinite(j.progress)&&j.progress>0?' · '+Math.round(j.progress)+'%':'');
+ let state=meta.querySelector('.badge');
+ if(prior&&prior!==j.status){
+  const updated=el('span','badge state-'+j.status+' state-arrive',stateText);
+  state.replaceWith(updated);state=updated;
+ }else{
+  state.className='badge state-'+j.status;
+  if(state.textContent!==stateText)state.textContent=stateText;
  }
+ if(!state.textContent)state.textContent=stateText;
+ card.querySelector('.job-duration').textContent=duration(j.duration);
+ card.querySelector('.expiry').textContent=t('expires')+' '+date(j.expires);
+ const activity=card.querySelector('.job-activity');
+ activity.hidden=j.status!=='running';
+ if(j.status==='running'){
+  const progress=Number.isFinite(j.progress)&&j.progress>0?Math.max(0,Math.min(100,j.progress)):null;
+  const indeterminate=progress===null;
+  activity.classList.toggle('is-indeterminate',indeterminate);
+  const fill=activity.querySelector('.job-activity-fill');
+  fill.style.width=indeterminate?'0%':progress+'%';
+  if(indeterminate){
+   activity.removeAttribute('role');activity.removeAttribute('aria-valuenow');
+   activity.setAttribute('aria-hidden','true');
+  }else{
+   activity.removeAttribute('aria-hidden');activity.setAttribute('role','progressbar');
+   activity.setAttribute('aria-label',t('transcribing'));
+   activity.setAttribute('aria-valuemin','0');activity.setAttribute('aria-valuemax','100');
+   activity.setAttribute('aria-valuenow',String(Math.round(progress)));
+  }
+ }
+ let error=card.querySelector('.job-error');
+ if(j.status==='failed'){
+  if(!error){error=el('p','error small job-error');activity.after(error)}
+  error.textContent=t('error');
+ }else if(error)error.remove();
+ let actions=card.querySelector('.transcript-card-actions');
+ if(j.status!=='done'){if(actions)actions.remove();return}
+ if(!actions){
+  actions=el('div','transcript-card-actions');
+  actions.append(el('button','button read-button'),el('div','download-formats'));
+  card.append(actions);
+ }
+ const read=actions.querySelector('.read-button');
+ read.textContent=t('read')+' ↗';
+ read.onclick=()=>readTranscript(j,read);
+ const formats=actions.querySelector('.download-formats');
+ formats.setAttribute('role','group');formats.setAttribute('aria-label',t('download'));
+ const allowed=j.timing==='none'?['txt','md','json']:['txt','md','srt','json'];
+ if(formats.dataset.allowed!==allowed.join(',')){
+  formats.dataset.allowed=allowed.join(',');formats.replaceChildren();
+  for(const fmt of allowed){
+   const down=el('button','format-button',fmt.toUpperCase());
+   down.onclick=async()=>{down.disabled=true;try{await download(j.id,fmt)}finally{down.disabled=false}};
+   formats.append(down);
+  }
+ }
+ for(const down of formats.children){
+  down.title=t('download')+' '+down.textContent;
+  down.setAttribute('aria-label',down.title);
+ }
+}
+function render(){
+ const query=$('search').value.toLocaleLowerCase();
+ const signature=JSON.stringify([jobs,locale,filter,query]);
+ if(signature===renderSignature)return;
+ renderSignature=signature;
+ const visible=jobs.filter(j=>(filter==='all'||filter==='active'&&['queued','running','uploading'].includes(j.status)||filter===j.status)
+  &&(j.title||'').toLocaleLowerCase().includes(query));
+ $('count').textContent=jobs.length;$('library-count').textContent=jobs.length;
+ const container=$('jobs');
+ if(!visible.length){
+  const label=t(jobs.length?'noMatch':'empty'),hint=t('emptyHint');
+  const existing=container.querySelector('.empty');
+  if(existing&&container.children.length===1){
+   existing.querySelector('strong').textContent=label;
+   existing.querySelector('p').textContent=hint;
+  }else{
+   const empty=el('div','empty');
+   empty.append(el('span','empty-mark','≋'),el('strong','',label),el('p','muted',hint));
+   container.replaceChildren(empty);
+  }
+  return;
+ }
+ const cards=new Map([...container.querySelectorAll('.transcript-card')].map(card=>[card.dataset.jobId,card]));
+ const keep=new Set();
+ for(let i=0;i<visible.length;i++){
+  const j=visible[i];let card=cards.get(j.id);
+  if(!card){card=makeJobCard(j);if(i<7)card.classList.add('card-appear')}
+  updateJobCard(card,j);
+  if(container.children[i]!==card)container.insertBefore(card,container.children[i]||null);
+  keep.add(card);
+ }
+ for(const child of [...container.children])if(!keep.has(child))child.remove();
 }
 function showHealth(){if(!health)return;$('health').dataset.pressure=!health.online?'offline':health.paused?'paused':health.pressure;$('health-text').textContent=health.paused?t('paused'):!health.online?t('offline'):`${t('online')} · ${health.queue} ${t('inQueue')}`;}
 async function refresh(){if(polling)return;polling=true;try{const [h,list]=await Promise.all([fetch('/api/health').then(r=>{if(!r.ok)throw Error();return r.json()}),api('/api/jobs').then(r=>r.json())]);health=h;jobs=list;showHealth();render()}catch{$('health').dataset.pressure='offline';$('health-text').textContent=t('unavailable')}finally{polling=false}}
