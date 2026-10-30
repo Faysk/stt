@@ -1,0 +1,12 @@
+.venv/
+__pycache__/
+.pytest_cache/
+.env
+db/*
+blob/*
+models/
+logs/
+node_modules/
+.wrangler/
+*.wav
+!tests/fixtures/*.wav
