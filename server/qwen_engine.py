@@ -66,6 +66,32 @@ def prepared_models(root=None):
         ready.append(profile)
     return ready
 
+def probe_audio_duration(path, av, max_seconds=7200):
+    """Reject corrupt, empty and overlong audio before allocating GPU memory.
+
+    Read only decoded frame metadata; do not retain PCM or trust container
+    duration. iter_windows() independently enforces the resampled sample cap.
+    """
+    total = 0.0
+    with av.open(str(path)) as container:
+        stream = next((item for item in container.streams if item.type == 'audio'), None)
+        if stream is None:
+            raise EngineError('QWEN_NO_AUDIO_STREAM')
+        for frame in container.decode(stream):
+            sample_rate = getattr(frame, 'sample_rate', None)
+            if not sample_rate:
+                sample_rate = getattr(stream.codec_context, 'sample_rate', 0)
+            samples = getattr(frame, 'samples', 0)
+            if not sample_rate or samples <= 0:
+                raise EngineError('QWEN_AUDIO_FRAME_INVALID')
+            total += samples / sample_rate
+            if total > max_seconds:
+                raise EngineError('QWEN_DURATION_EXCEEDED')
+    if total <= 0:
+        raise EngineError('QWEN_AUDIO_EMPTY')
+    return total
+
+
 def iter_windows(path, av, np, seconds=WINDOW_SECONDS):
     """Stream mono float32 at 16kHz; never load entire recording."""
     limit=int(seconds*SAMPLE_RATE)
@@ -158,22 +184,8 @@ def run(config):
             raise EngineError('QWEN_LANGUAGE_HINT_INVALID')
         import numpy as np
         import av
-        import torch
-        from transformers import AutoModelForMultimodalLM, AutoProcessor
-        hardware=_gpu_gate(torch,recipe['min_available_gib'])
-        dtype=getattr(torch,job['compute'])
-        model=None
-        processor=None
-        _progress(folder,'loading',0)
-        t=time.perf_counter()
-        processor=AutoProcessor.from_pretrained(str(model_path),local_files_only=True)  # nosec B615: verified local directory; no remote downloads
-        model=AutoModelForMultimodalLM.from_pretrained(  # nosec B615: fixed local model path; no remote downloads
-            str(model_path),dtype=dtype,device_map={'':'cuda:0'},local_files_only=True)
-        device_map=getattr(model,'hf_device_map',{})
-        if not str(model.device).startswith('cuda') or (
-            device_map and any(str(v).startswith(('cpu','disk')) for v in device_map.values())):
-            raise EngineError('QWEN_UNEXPECTED_OFFLOAD')
-        stages['model_load_s']=time.perf_counter()-t
+        # Download and validate media before importing Torch/Transformers or
+        # allocating a large GPU model. Bad input must not consume VRAM.
         media=folder/'input.media'
         if job['source']!='upload':
             import yt_dlp
@@ -188,6 +200,28 @@ def run(config):
             if not media.is_file() or media.stat().st_size > MAX_MEDIA_BYTES:
                 raise EngineError('QWEN_DOWNLOAD_TOO_LARGE')
             stages['download_s']=time.perf_counter()-t
+        if not media.is_file() or media.is_symlink() or media.stat().st_size > MAX_MEDIA_BYTES:
+            raise EngineError('QWEN_MEDIA_TOO_LARGE_OR_MISSING')
+        _progress(folder,'preparing',0)
+        t=time.perf_counter()
+        probe_audio_duration(media,av)
+        stages['media_probe_s']=time.perf_counter()-t
+        import torch
+        from transformers import AutoModelForMultimodalLM, AutoProcessor
+        hardware=_gpu_gate(torch,recipe['min_available_gib'])
+        dtype=getattr(torch,job['compute'])
+        model=None
+        processor=None
+        _progress(folder,'loading',0)
+        t=time.perf_counter()
+        processor=AutoProcessor.from_pretrained(str(model_path),local_files_only=True)  # nosec B615: local-only model; no remote downloads
+        model=AutoModelForMultimodalLM.from_pretrained(  # nosec B615: pinned local-only model
+            str(model_path),dtype=dtype,device_map={'':'cuda:0'},local_files_only=True)
+        device_map=getattr(model,'hf_device_map',{})
+        if not str(model.device).startswith('cuda') or (
+            device_map and any(str(v).startswith(('cpu','disk')) for v in device_map.values())):
+            raise EngineError('QWEN_UNEXPECTED_OFFLOAD')
+        stages['model_load_s']=time.perf_counter()-t
         transcripts=[]
         languages=[]
         samples=0
