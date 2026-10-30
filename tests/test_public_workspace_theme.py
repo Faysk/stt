@@ -6,6 +6,9 @@ def test_public_header_and_workspace_contract():
     html=(ROOT/"web/index.html").read_text(encoding="utf-8")
     nav=html.split('<header class="public-header">',1)[1].split("</header>",1)[0]
     assert 'id="health"' in nav and 'id="language"' in nav and 'id="theme-toggle"' in nav
+    assert '<label class="language-picker"><select id="language"' in nav
+    assert '◎' not in nav
+    assert nav.count('id="health"') == 1
     assert 'id="count"' not in html
     assert 'class="badge neutral">24h' not in html
     assert html.count('id="library-count"')==1
@@ -37,3 +40,20 @@ def test_light_palette_layout_and_feedback():
     assert "setUploadMeter(n)" in js and "Number.isFinite(j.progress)" in js
     assert "classList.add('is-loading')" in js and "classList.remove('is-loading')" in js
     assert "t('expires')" in js
+
+def test_header_status_uses_control_shape_in_both_themes():
+    css=(ROOT/"web/public-theme.css").read_text(encoding="utf-8")
+    base=(ROOT/"web/public-polish.css").read_text(encoding="utf-8")
+    assert ".public-page .public-header .service-status {" in css
+    style=css.split(".public-page .public-header .service-status {",1)[1].split("}",1)[0]
+    assert "min-height: 40px;" in style
+    assert "border-radius: 9px;" in style
+    assert "background: #151e2b;" in style
+    assert "border: 1px solid #3a4c63;" in style
+    assert 'html[data-theme="light"] .public-page .service-status {' in css
+    assert "border-color:#b6c6d9;background:#edf3f9" in css
+    assert "data-pressure=\"free\"" in css
+    assert "data-pressure=\"short\"" in css
+    assert "data-pressure=\"high\"" in css
+    assert "language-picker > span[aria-hidden]" not in css
+    assert "language-picker > span[aria-hidden]" not in base
