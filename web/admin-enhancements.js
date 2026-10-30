@@ -60,7 +60,11 @@
     if (p && (p.status === 'pending' || p.status === 'running')) {
       return {label:stateLabel(p.status), cls:'working'};
     }
+    if (p?.status === 'ready') return {label:'Preparado em disco', cls:'good'};
     if (p?.status === 'failed') return {label:'Falha no preparo', cls:'bad'};
+    const worker = dashboardData?.workers.find(w => w.id === $('worker').value);
+    if (!worker || dashboardData.now - worker.seen >= 90)
+      return {label:'Executor offline', cls:'neutral'};
     return {label:'Sob demanda', cls:'neutral'};
   }
   async function requestPreload(model) {
@@ -95,6 +99,7 @@
           ? 'Solicitando...' : state.label;
         tag.className = 'badge ' + (pendingPreloads.has($('worker').value + ':' + model) ? 'working' : state.cls);
       }
+      card.dataset.model = model;
       const isSelected = model === selected;
       const isActive = model === dashboardData.settings.model && $('worker').value === dashboardData.settings.worker;
       card.classList.toggle('active',isSelected);
@@ -148,6 +153,7 @@
         node('span',(info.models || []).length + ' modelos em cache','feature-pill'),
         node('span','CPU: ' + (types.cpu || []).join(', ') + ' / CUDA: ' + (types.cuda || []).join(', '),'feature-pill'));
       card.append(details);
+      card.dataset.worker = w.id;
       const selected = $('worker').value === w.id;
       card.classList.toggle('is-selected',selected);
       card.classList.toggle('is-offline',!online);
@@ -174,6 +180,7 @@
     for (const d of devices) {
       const b = node('button','', 'choice-card');
       b.type = 'button';
+      b.dataset.device = d.id;
       b.disabled = !d.allowed && $('device').value !== d.id;
       b.classList.toggle('selected',$('device').value === d.id);
       b.setAttribute('aria-pressed',String($('device').value === d.id));
@@ -198,6 +205,7 @@
       const entry = descriptions[type] || [type,'Tipo de computação disponibilizado pelo executor.'];
       const b = node('button','', 'choice-card precision-card');
       b.type = 'button';
+      b.dataset.compute = type;
       b.classList.toggle('selected',type === current);
       b.setAttribute('aria-pressed',String(type === current));
       b.append(node('strong',type),node('small',entry[0]),node('span',entry[1]));
@@ -213,17 +221,31 @@
   }
   const originalRender = renderSettings;
   renderSettings = function(data) {
+    const focused = document.activeElement;
+    const selector = focused?.dataset?.model ? '[data-model="' + focused.dataset.model + '"]'
+      : focused?.dataset?.worker ? '[data-worker="' + focused.dataset.worker + '"]'
+      : focused?.dataset?.device ? '[data-device="' + focused.dataset.device + '"]'
+      : focused?.dataset?.compute ? '[data-compute="' + focused.dataset.compute + '"]' : null;
     dashboardData = data;
     originalRender(data);
     enhanceModels();
     enhanceWorkers();
     renderDevices();
     renderPrecisions();
+    if (selector) document.querySelector(selector)?.focus({preventScroll:true});
   };
   // Native selects remain keyboard-accessible; visual cards reflect their values.
   for (const id of ['worker','model','device','compute']) {
     $(id).addEventListener('change',() => {
       markDirty();
+      if (id === 'worker') {
+        const info = workerInfo();
+        if ($('device').value === 'cuda' &&
+            (!info.gpu || !(info.compute_types?.cuda || []).length)) {
+          $('device').value = 'cpu';
+          $('settings-message').textContent = 'CUDA indisponível neste executor; dispositivo ajustado para CPU.';
+        }
+      }
       if (id === 'device' || id === 'worker') precision();
       rerender();
     });
@@ -258,6 +280,33 @@
       submit.disabled = false;
       submit.classList.remove('is-loading');
       submit.textContent = 'Salvar configuração';
+    }
+  };
+  const originalLoadJobs = loadJobs;
+  loadJobs = async function(...args) {
+    const section = $('history');
+    section.classList.add('is-fetching');
+    if (!$('runs').children.length) {
+      for (let n = 0; n < 5; n++) {
+        const row = node('tr','','skeleton-row');
+        const cell = node('td');
+        cell.colSpan = 17;
+        cell.append(node('span','','skeleton-bar'));
+        row.append(cell);
+        $('runs').append(row);
+      }
+    }
+    try { return await originalLoadJobs(...args); }
+    finally { section.classList.remove('is-fetching'); }
+  };
+  const originalLoadPeriod = loadPeriod;
+  loadPeriod = async function(...args) {
+    $('activity').classList.add('is-fetching');
+    $('usage').classList.add('is-fetching');
+    try { return await originalLoadPeriod(...args); }
+    finally {
+      $('activity').classList.remove('is-fetching');
+      $('usage').classList.remove('is-fetching');
     }
   };
   const originalRefresh = refresh;
