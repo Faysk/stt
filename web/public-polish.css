@@ -331,6 +331,12 @@
   .public-page .public-footer a:hover { color: var(--accent); }
 }
 
+@media (hover: hover) and (prefers-reduced-motion: no-preference) {
+  .public-page #submit { transition: background-color var(--ui-motion), border-color var(--ui-motion), box-shadow var(--ui-motion), transform var(--ui-motion); }
+  .public-page #submit:not(:disabled):hover { transform: translateY(-1px); box-shadow: 0 6px 18px #2985ed24; }
+  .public-page #submit:not(:disabled):active { transform: translateY(0); }
+}
+
 /* Two columns only when each half remains genuinely usable. */
 @media (min-width: 1100px) and (orientation: landscape) {
   .public-page .public-main {
@@ -370,11 +376,15 @@
   }
   .public-page .transcript-card-actions { align-items: flex-start; }
   .public-page .download-formats { margin-inline-start: 0; }
-  .public-page .format-button { min-height: 41px; min-width: 44px; }
-  .public-page .read-button { min-height: 41px; }
+  .public-page .format-button { min-height: 44px; min-width: 44px; }
+  .public-page .read-button { min-height: 44px; }
   .public-page .filters button,
-  .public-page .tabs button { min-height: 40px; }
-  .public-page .language-picker select { min-height: 40px; }
+  .public-page .tabs button { min-height: 44px; }
+  .public-page .language-picker select,
+  .public-page .library-tools input,
+  .public-page #submit,
+  .public-page .reader-toolbar .button { min-height: 44px; }
+  .public-page .public-footer a { display: inline-flex; align-items: center; min-height: 44px; }
   .public-page .reader-dialog { border-radius: 0; }
   .public-page .reader-header { padding: 18px 17px 15px; }
   .public-page .reader-row { grid-template-columns: 68px minmax(0, 1fr); gap: 12px; padding-block: 13px; }
