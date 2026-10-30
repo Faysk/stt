@@ -2,28 +2,28 @@ const assert=require('node:assert/strict');
 (async()=>{
  const {default:worker}=await import('../edge/worker.js');
  const env={ASSETS:{fetch:async request=>new Response(new URL(request.url).pathname==='/index.html'?'Home':'Asset',{status:['/index.html','/admin.html','/icon.svg'].includes(new URL(request.url).pathname)?200:404})}};
- const home=await worker.fetch(new Request('https://tts.faysk.dev/'),env);
+ const home=await worker.fetch(new Request('https://stt.faysk.dev/'),env);
  assert.equal(home.status,200,'Public root must serve the index when HTML handling is disabled');
  assert.equal(await home.text(),'Home');
- assert.equal((await worker.fetch(new Request('https://tts.faysk.dev/admin.html'),env)).status,200);
- assert.equal((await worker.fetch(new Request('https://tts.faysk.dev/missing'),env)).status,404);
- const noOrigin=await worker.fetch(new Request('https://tts.faysk.dev/api/health'),env);
+ assert.equal((await worker.fetch(new Request('https://stt.faysk.dev/admin.html'),env)).status,200);
+ assert.equal((await worker.fetch(new Request('https://stt.faysk.dev/missing'),env)).status,404);
+ const noOrigin=await worker.fetch(new Request('https://stt.faysk.dev/api/health'),env);
  assert.equal(noOrigin.status,503);
  assert.equal(noOrigin.headers.get('cache-control'),'no-store');
  assert.equal(noOrigin.headers.get('x-robots-tag'),'noindex, nofollow, noarchive');
  assert.equal(noOrigin.headers.get('x-content-type-options'),'nosniff');
  let forwarded;
  global.fetch=async(url,options)=>{forwarded={url:String(url),options};return new Response('{"online":true}',{headers:{'content-type':'application/json'}})};
- const response=await worker.fetch(new Request('https://tts.faysk.dev/api/health',{headers:{'CF-Connecting-IP':'192.0.2.1','x-tts-client':'spoofed','x-edge-key':'spoofed'}}),{...env,ORIGIN:'https://origin.example',EDGE_KEY:'test-edge'});
+ const response=await worker.fetch(new Request('https://stt.faysk.dev/api/health',{headers:{'CF-Connecting-IP':'192.0.2.1','x-stt-client':'spoofed','x-edge-key':'spoofed'}}),{...env,ORIGIN:'https://origin.example',EDGE_KEY:'test-edge'});
  assert.equal(response.status,200);
  assert.equal(forwarded.url,'https://origin.example/api/health');
  assert.equal(forwarded.options.headers.get('x-edge-key'),'test-edge');
- assert.equal(forwarded.options.headers.get('x-tts-client'),'192.0.2.1');
+ assert.equal(forwarded.options.headers.get('x-stt-client'),'192.0.2.1');
  assert.equal(response.headers.get('cache-control'),'no-store');
  assert.equal(response.headers.get('x-robots-tag'),'noindex, nofollow, noarchive');
  assert.equal(response.headers.get('x-content-type-options'),'nosniff');
  global.fetch=async()=>{throw new Error('simulated unavailable origin')};
- const unavailable=await worker.fetch(new Request('https://tts.faysk.dev/api/health'),
+ const unavailable=await worker.fetch(new Request('https://stt.faysk.dev/api/health'),
    {...env,ORIGIN:'https://origin.example',EDGE_KEY:'test-edge'});
  assert.equal(unavailable.status,503);
  assert.equal(unavailable.headers.get('cache-control'),'no-store');
