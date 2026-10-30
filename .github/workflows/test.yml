@@ -44,7 +44,7 @@ jobs:
       - name: Parse operational PowerShell scripts
         shell: pwsh
         run: |
-          foreach ($file in @('scripts/start.ps1', 'scripts/stop.ps1', 'scripts/collect-stt-preflight.ps1', 'scripts/publish-stt.ps1')) {
+          foreach ($file in @('scripts/start.ps1', 'scripts/stop.ps1', 'scripts/collect-stt-preflight.ps1', 'scripts/publish-stt.ps1', 'scripts/setup-s7-worker.ps1')) {
             $tokens = $null
             $errors = $null
             [System.Management.Automation.Language.Parser]::ParseFile(
