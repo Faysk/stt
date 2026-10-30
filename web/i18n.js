@@ -16,9 +16,9 @@ for(const [language,labels]of Object.entries(readerLabels))Object.assign(strings
 const readyLabels={en:'Ready',pt:'Pronta',es:'Lista',fr:'Prête',zh:'已完成',hi:'तैयार',ar:'جاهز',bn:'প্রস্তুত',id:'Selesai',ur:'تیار'};
 for(const [language,label]of Object.entries(readyLabels))strings[language].readyState=label;
 const languageNames={en:'English',zh:'中文',hi:'हिन्दी',es:'Español',ar:'العربية',fr:'Français',bn:'বাংলা',pt:'Português',id:'Bahasa Indonesia',ur:'اردو'};
-let preferred;try{preferred=localStorage.getItem('tts.language')}catch{}
+let preferred;try{preferred=localStorage.getItem('stt.language')||localStorage.getItem('tts.language');if(preferred)localStorage.setItem('stt.language',preferred)}catch{}
 const requested=new URLSearchParams(location.search).get('lang');
 let locale=[requested,preferred,...(navigator.languages||[navigator.language])].filter(Boolean).map(x=>x.toLowerCase().split('-')[0]).find(x=>strings[x])||'en';
 function t(key){return strings[locale][key]||strings.en[key]||key}
-function applyLanguage(){document.documentElement.lang=locale;document.documentElement.dir=['ar','ur'].includes(locale)?'rtl':'ltr';document.title=`tts / faysk — ${t('title')}`;for(const e of document.querySelectorAll('[data-t]'))e.textContent=t(e.dataset.t);for(const e of document.querySelectorAll('[data-placeholder]'))e.placeholder=t(e.dataset.placeholder);for(const e of document.querySelectorAll('[data-label]'))e.setAttribute('aria-label',t(e.dataset.label));}
-function setLanguage(value){if(!strings[value])return;locale=value;try{localStorage.setItem('tts.language',value)}catch{}applyLanguage();document.dispatchEvent(new Event('languagechange'))}
+function applyLanguage(){document.documentElement.lang=locale;document.documentElement.dir=['ar','ur'].includes(locale)?'rtl':'ltr';document.title=`stt / faysk — ${t('title')}`;for(const e of document.querySelectorAll('[data-t]'))e.textContent=t(e.dataset.t);for(const e of document.querySelectorAll('[data-placeholder]'))e.placeholder=t(e.dataset.placeholder);for(const e of document.querySelectorAll('[data-label]'))e.setAttribute('aria-label',t(e.dataset.label));}
+function setLanguage(value){if(!strings[value])return;locale=value;try{localStorage.setItem('stt.language',value)}catch{}applyLanguage();document.dispatchEvent(new Event('languagechange'))}
