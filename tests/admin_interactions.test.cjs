@@ -32,7 +32,7 @@ class El {
 }
 const ids=['worker','model','device','compute','settings-message','settings-form','model-catalog','workers',
   'versions','device-cards','precision-cards','config-summary','login','admin-key','admin-message',
-  'runs','history','activity','usage','refresh'];
+  'runs','history','activity','usage','refresh','precision-explainer'];
 const nodes=Object.fromEntries(ids.map(id=>[id,new El('div')]));
 nodes.worker.value='notebook';nodes.model.value='small';nodes.device.value='cpu';nodes.compute.value='int8';
 nodes.login.onclick=()=>{};
@@ -72,6 +72,18 @@ vm.runInContext(fs.readFileSync('web/admin-enhancements.js','utf8'),ctx);
   ctx.renderSettings(data);
   assert.equal(nodes['model-catalog'].children.length,2);
   assert.equal(nodes['precision-cards'].children.length,3);
+  assert.match(nodes['precision-explainer'].textContent,/FP16.*GPU CUDA/);
+  assert.ok(!nodes['precision-cards'].children.some(card=>card.dataset.compute==='float16'),
+    'FP16 should not be offered for CPU, where the runtime falls back to FP32');
+  assert.equal(nodes['precision-cards'].children.find(card=>card.dataset.compute==='int8_float32')?.children[1]?.textContent,
+    'INT8 + FP32 · Misto');
+  const gpuCard=nodes['device-cards'].children[1];
+  gpuCard.onclick();
+  assert.equal(nodes.device.value,'cuda');
+  assert.ok(nodes['precision-cards'].children.some(card=>card.dataset.compute==='float16'));
+  assert.match(nodes['precision-explainer'].textContent,/FP16 usa ponto flutuante de 16 bits/);
+  nodes['device-cards'].children[0].onclick();
+  assert.equal(nodes.device.value,'cpu');
   const small=nodes['model-catalog'].children[0];
   assert.equal(small.attributes['aria-pressed'],'true');
   assert.match(small.textContent,/No cache do executor/);
@@ -88,5 +100,9 @@ vm.runInContext(fs.readFileSync('web/admin-enhancements.js','utf8'),ctx);
   assert.equal(nodes.worker.value,'cpu-only');
   assert.equal(nodes['device-cards'].children[1].disabled,true);
   assert.equal(nodes['precision-cards'].children.length,2);
-  console.log('Admin controls: model selection, cache request, dirty state, worker capabilities OK.');
+  const html=fs.readFileSync('web/admin.html','utf8');
+  assert.match(html,/id="configuration-state" hidden/);
+  assert.doesNotMatch(html,/Seleção alternativa por menus|class="config-advanced"/);
+  assert.match(html,/id="precision-explainer"/);
+  console.log('Admin controls: card-only settings, CPU/GPU FP16, mixed precision, model and cache interactions OK.');
 })().catch(e=>{console.error(e);process.exitCode=1});
