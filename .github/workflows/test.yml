@@ -4,27 +4,42 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v6
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
       - run: uv sync --locked --group dev
       - run: uv run python -m compileall -q server scripts tests
       - run: uv run pytest -q
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '22'
       - run: npm run check
       - run: node tests/i18n.test.cjs
       - run: node tests/session_compat.test.cjs
+      - run: node tests/deploy_guard.test.cjs
       - run: node tests/edge.test.cjs
+
+  worker-stt-build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+      - name: Install locked Wrangler
+        run: npm ci
+      - name: Validate isolated STT Worker locally without credentials or deploy
+        run: npx wrangler deploy --config wrangler.stt.jsonc --dry-run --outdir .wrangler/stt-dry-run
 
   windows-script-parse:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Parse operational PowerShell scripts
         shell: pwsh
         run: |
-          foreach ($file in @('scripts/start.ps1', 'scripts/stop.ps1')) {
+          foreach ($file in @('scripts/start.ps1', 'scripts/stop.ps1', 'scripts/collect-stt-preflight.ps1')) {
             $tokens = $null
             $errors = $null
             [System.Management.Automation.Language.Parser]::ParseFile(

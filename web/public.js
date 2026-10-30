@@ -1,4 +1,6 @@
 const $=id=>document.getElementById(id);
+const legacyNotice=$('legacy-access');
+if(legacyNotice && location.hostname==='stt.faysk.dev')legacyNotice.hidden=false;
 function el(tag,cls,text){const e=document.createElement(tag);if(cls)e.className=cls;if(text!==undefined)e.textContent=text;return e}
 const validSession=value=>/^[a-f0-9]{64}$/.test(value||'');
 let key;
