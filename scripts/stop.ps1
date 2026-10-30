@@ -1,21 +1,44 @@
 $ErrorActionPreference = 'Stop'
 $projectPath = (Resolve-Path -LiteralPath (Split-Path $PSScriptRoot -Parent)).Path
+$runtime = Join-Path $projectPath '.venv\Scripts\python.exe'
+$ids = @()
 $pidFile = Join-Path $projectPath 'logs\pids.json'
-$processIds = @()
 if (Test-Path -LiteralPath $pidFile) {
     $saved = Get-Content -LiteralPath $pidFile | ConvertFrom-Json
-    $processIds += $saved.api, $saved.worker
+    $ids += @($saved.api, $saved.worker)
 }
 $tunnelFile = Join-Path $projectPath 'logs\tunnel.pid'
-if (Test-Path -LiteralPath $tunnelFile) { $processIds += [int](Get-Content -LiteralPath $tunnelFile) }
-foreach ($processId in $processIds) {
-    $process = Get-CimInstance Win32_Process -Filter "ProcessId=$processId" -ErrorAction SilentlyContinue
-    if ($process -and $process.ExecutablePath -eq (Join-Path $projectPath '.venv\Scripts\python.exe')) {
-        $children = Get-CimInstance Win32_Process -Filter "ParentProcessId=$processId"
-        foreach ($child in $children) {
-            if ($child.Name -in @('python.exe','cloudflared.exe')) { Stop-Process -Id $child.ProcessId -ErrorAction SilentlyContinue }
+if (Test-Path -LiteralPath $tunnelFile) { $ids += [int](Get-Content -LiteralPath $tunnelFile) }
+
+function Stop-OwnedTree([int]$RootPid) {
+    $root = Get-CimInstance Win32_Process -Filter "ProcessId=$RootPid" -ErrorAction SilentlyContinue
+    if (-not $root) { return }
+    # A stale PID file must never terminate an unrelated executable.
+    if ($root.ExecutablePath -ne $runtime) { return }
+    if ($root.CommandLine -notmatch 'server\.(app|worker|tunnel)|uvicorn') { return }
+    $all = Get-CimInstance Win32_Process -ErrorAction SilentlyContinue
+    $children = @{}
+    foreach ($process in $all) {
+        $parent = [int]$process.ParentProcessId
+        if (-not $children.ContainsKey($parent)) { $children[$parent] = @() }
+        $children[$parent] += $process
+    }
+    function Stop-Descendants([int]$Parent, [System.Collections.IDictionary]$Tree) {
+        foreach ($child in @($Tree[$Parent])) {
+            if (-not $child) { continue }
+            Stop-Descendants -Parent ([int]$child.ProcessId) -Tree $Tree
+            # Verify current parent PID against the captured tree before stopping.
+            $current = Get-CimInstance Win32_Process -Filter "ProcessId=$($child.ProcessId)" -ErrorAction SilentlyContinue
+            if ($current -and $current.ParentProcessId -eq $Parent -and $current.CreationDate -eq $child.CreationDate) {
+                Stop-Process -Id $child.ProcessId -Force -ErrorAction SilentlyContinue
+            }
         }
-        Stop-Process -Id $processId -ErrorAction SilentlyContinue
+    }
+    Stop-Descendants -Parent $RootPid -Tree $children
+    $current = Get-CimInstance Win32_Process -Filter "ProcessId=$RootPid" -ErrorAction SilentlyContinue
+    if ($current -and $current.CreationDate -eq $root.CreationDate -and $current.ExecutablePath -eq $runtime) {
+        Stop-Process -Id $RootPid -Force -ErrorAction SilentlyContinue
     }
 }
-Write-Output 'Processos deste projeto encerrados. Os arquivos permanecem no E:.'
+foreach ($id in ($ids | Where-Object { $_ -match '^\d+$' } | Sort-Object -Unique)) { Stop-OwnedTree -RootPid ([int]$id) }
+Write-Output 'Processos verificados deste projeto encerrados. Resultados pendentes na outbox foram preservados.'

@@ -35,7 +35,8 @@ def test_session_isolation_and_exports(setup):
     assert c.post('/api/worker/claim',headers=WORKER,json={'id':'notebook'}).json()['job'] is None
     payload={'lease':claim['lease'],'duration':5,'elapsed':2,'segments':[{'start':0,'end':5,'text':'Olá <script>mundo</script>'}],'language':'pt'}
     assert c.post(f'/api/worker/{jid}/result',headers=WORKER,json=payload).status_code==200
-    assert c.post(f'/api/worker/{jid}/result',headers=WORKER,json=payload).status_code==409
+    retry=c.post(f'/api/worker/{jid}/result',headers=WORKER,json=payload)
+    assert retry.status_code==200 and retry.json()['duplicate'] is True
     for fmt in ['txt','md','srt','json']:
         assert c.get(f'/api/jobs/{jid}/download/{fmt}',headers=SESSION).status_code==200
         assert c.get(f'/api/jobs/{jid}/download/{fmt}',headers={'x-session-key':'b'*64}).status_code==404

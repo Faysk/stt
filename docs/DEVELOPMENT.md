@@ -73,3 +73,31 @@ Em produção, habilite a autenticação da origem com `TTS_REQUIRE_EDGE=1`. Ass
 - [Auditoria TTS de 30/10/2026](audits/2026-10-30-tts.md): baseline, falhas confirmadas, reproduções isoladas e plano de evolução dos motores.
 
 Achados de auditoria não significam correções implementadas. O relatório distingue bugs, melhorias planejadas e verificações que não foram executadas.
+
+## Novas garantias de confiabilidade (branch experimental)
+
+- Admissão de upload é realizada **antes do parser multipart**, com reserva
+  transacional por rede/sessão e até 4 uploads simultâneos.
+- A expiração da API bloqueia o acesso imediatamente, mesmo que a remoção
+  física falhe. `purged_at`, `purge_attempts` e `purge_error` permitem
+  diagnóstico; novos passes respeitam backoff. Não apague manualmente o banco
+  para "resolver" um erro de purga.
+- O executor escreve resultados em uma **outbox local persistente**
+  (`TTS_OUTBOX`, por padrão `worker-outbox/`) antes de enviar. Não coloque
+  esse diretório em cloud sync, Git ou em pasta pública. Configure volume
+  persistente com ACL restrita e política de backup/eliminação. A confirmação
+  por recibo permite reenvio após restart sem perder resultado válido.
+- Se o executor ficar desligado, limpezas pendentes só retomam ao reiniciar;
+  a outbox é saneada por expiração quando o executor volta.
+- A tentativa de inferência tem deadline desde o início da preparação. Os
+  subprocessos são geridos por grupo/árvore própria, sem `taskkill` global
+  por nome. O script `stop.ps1` valida a identidade dos processos raiz.
+- Heartbeats são serializados com a manutenção e condicionados ao lease atual.
+- Resultados com cronologia inválida recebem 422; resultados idênticos
+  enviados novamente recebem o mesmo recibo sem criar outra conclusão.
+- [Operação Qwen3 e benchmark v2](QWEN_AND_BENCHMARK.md) descreve receitas
+  isoladas, limitações, métricas nulas e requisitos antes de produção.
+
+**Importante:** a aprovação da CI valida mocks e testes isolados. Não implica
+deploy, ensaio com GPU, teste do Cloudflare em produção ou validação de
+`taskkill` com árvore de processos reais.

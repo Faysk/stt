@@ -40,7 +40,7 @@ function renderReader(){
 async function readTranscript(j,button){
  button.disabled=true;
  try{const [data,structured]=await Promise.all([api(`/api/jobs/${j.id}`).then(r=>r.json()),api(`/api/jobs/${j.id}/download/json`).then(r=>r.json())]);
-  currentTranscript=data.text;readerData=structured;$('preview-title').textContent=j.title||t('read');$('reader-meta').textContent=[duration(j.duration),structured.language?.toUpperCase()].filter(Boolean).join(' · ');$('copy').textContent=t('copy');renderReader();$('preview').showModal();$('preview-text').scrollTop=0;
+  currentTranscript=data.text;readerData=structured;readerMode=structured.timing==='none'?'plain':'timeline';const timelineButton=document.querySelector('[data-reader-mode="timeline"]');timelineButton.disabled=structured.timing==='none';timelineButton.title=structured.timing==='none'?'Timestamps unavailable for this model':'';$('preview-title').textContent=j.title||t('read');$('reader-meta').textContent=[duration(j.duration),structured.language?.toUpperCase()].filter(Boolean).join(' · ');$('copy').textContent=t('copy');renderReader();$('preview').showModal();$('preview-text').scrollTop=0;
  }catch(e){message(e.message,true)}finally{button.disabled=false}
 }
 function render(){
@@ -56,7 +56,7 @@ function render(){
   if(j.status==='done'){
    const actions=el('div','transcript-card-actions');const read=el('button','button read-button',t('read')+' ↗');read.onclick=()=>readTranscript(j,read);
    const formats=el('div','download-formats');formats.setAttribute('role','group');formats.setAttribute('aria-label',t('download'));
-   for(const format of ['txt','md','srt','json']){const down=el('button','format-button',format.toUpperCase());down.title=`${t('download')} ${format.toUpperCase()}`;down.setAttribute('aria-label',`${t('download')} ${format.toUpperCase()}`);down.onclick=async()=>{down.disabled=true;try{await download(j.id,format)}finally{down.disabled=false}};formats.append(down)}
+   for(const format of (j.timing==='none'?['txt','md','json']:['txt','md','srt','json'])){const down=el('button','format-button',format.toUpperCase());down.title=`${t('download')} ${format.toUpperCase()}`;down.setAttribute('aria-label',`${t('download')} ${format.toUpperCase()}`);down.onclick=async()=>{down.disabled=true;try{await download(j.id,format)}finally{down.disabled=false}};formats.append(down)}
    actions.append(read,formats);card.append(actions);
   }
   $('jobs').append(card);
@@ -67,4 +67,4 @@ async function refresh(){if(polling)return;polling=true;try{const [h,list]=await
 for(const b of document.querySelectorAll('[data-filter]'))b.onclick=()=>{filter=b.dataset.filter;for(const x of document.querySelectorAll('[data-filter]')){x.classList.toggle('active',x===b);x.setAttribute('aria-pressed',String(x===b))}render()};
 $('search').oninput=render;$('close-preview').onclick=()=>$('preview').close();$('copy').onclick=async()=>{try{await navigator.clipboard.writeText(currentTranscript);$('copy').textContent=t('copied')}catch{$('preview-text').focus()}};
 for(const [value,name]of Object.entries(languageNames)){const option=el('option','',name);option.value=value;$('language').append(option)}$('language').value=locale;$('language').onchange=e=>setLanguage(e.target.value);
-document.addEventListener('languagechange',()=>{$('language').value=locale;if(selected)$('file-label').textContent=selected.name;showHealth();render();message('')});for(const b of document.querySelectorAll('[data-reader-mode]'))b.onclick=()=>{readerMode=b.dataset.readerMode;renderReader()};$('preview').addEventListener('close',()=>{readerData=null;currentTranscript='';$('preview-text').replaceChildren()});applyLanguage();refresh();setInterval(()=>{if(!document.hidden)refresh()},5000);
+document.addEventListener('languagechange',()=>{$('language').value=locale;if(selected)$('file-label').textContent=selected.name;showHealth();render();message('')});for(const b of document.querySelectorAll('[data-reader-mode]'))b.onclick=()=>{readerMode=b.dataset.readerMode;renderReader()};$('preview').addEventListener('close',()=>{readerData=null;currentTranscript='';document.querySelector('[data-reader-mode="timeline"]').disabled=false;$('preview-text').replaceChildren()});applyLanguage();refresh();setInterval(()=>{if(!document.hidden)refresh()},5000);
