@@ -55,3 +55,22 @@
 - Cada issue exige link de PR, teste específico (inclusive teste físico se aplicável), riscos/remanescentes e decisão de encerramento.
 - Não versionar transcrições privadas, áudio de utilizadores, tokens, IP privados desnecessários, credenciais de túnel, `.env`, bases SQLite, pesos nem estado Terraform.
 - O repositório STT governa o código da aplicação; o IaC só referencia a infraestrutura e as evidências. O projeto `Faysk/tda` não faz parte desta migração.
+
+
+---
+
+## Atualização de triagem de issues concluídas — 30/10/2026
+
+O operador autorizou encerrar **somente o trabalho já efetivamente entregue**. Após revisão de código, testes e checks, **10 issues foram encerradas como `completed`**, cada qual com uma nota de evidência no próprio ticket:
+
+- **#1, #2, #3, #4, #5, #6:** defeitos originais de retenção, admissão de uploads, outbox, deadline/processos, lease/heartbeat e validade cronológica corrigidos na aplicação; regressões específicas em `tests/test_reliability.py` e `tests/test_release_safety.py`.
+- **#15, #17:** branding/SEO STT e atualização de scripts/manifests/CI/documentação, com npm/uv e reinício/Cloudflare confirmados pelo operador.
+- **#21, #24:** publicação de artefatos por geração e validação de segurança com testes de falha, CI `security.yml`, auditorias Python/Node, SAST e secret scanning.
+
+**Evidência da implantação:** Cloudflare Worker `cf3aaf2b-2422-4216-acd6-ebfe1e379a1d`, frontend/API públicos HTTP 200; Windows local: `75 passed, 1 skipped`, `npm run check` aprovado. Referência: [PR #59](https://github.com/Faysk/stt/pull/59) e [#57](https://github.com/Faysk/stt/issues/57).
+
+**Saldo atualizado da baseline de 42 issues: 10 concluídas, 32 abertas.** A tabela original acima registra o estado histórico antes desta triagem; não altera os marcos propostos nem remove tarefas pendentes.
+
+**Principais critérios ainda não demonstrados:** #35 serviço Windows persistente após boot/logoff, #36 validação exata de digest de receipt, #37 E2E de upload/GPU/retention em Windows, #38 limites de body JSON, #46–#48 progresso/recuperação total de preload, #53 GPU por processo, #54 ordenação global, #19 rollback testado. Qwen (#7) continua pesquisa opcional; não declarar 100% do produto com base na proporção de tickets fechados.
+
+**Escopo de #3:** o outbox durável e tratamento de timeout estão entregues; a comparação criptográfica exata de recibo permanece no item especializado #36. **Escopo de #4:** encerramento de filho testado em CI; autostart e comportamento real após reboot permanecem em #35. **Escopo de #21:** consistência por geração de arquivo entregue; ensaio operacional completo permanece em #19/#37.
