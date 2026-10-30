@@ -1,8 +1,8 @@
 # Primeiro ensaio local
 
-30/10/2026. Windows, Intel i7-14700HX, NVIDIA RTX 4070 Laptop (8 GB). Motor faster-whisper 1.2.1 / CTranslate2 4.8.4 / PyAV 16.1.0. Modelo `small`, beam size 5, VAD ativado, 8 threads de CPU. Dependências completas em `uv.lock`.
+30/10/2026. Ensaio de referência com CPU e GPU CUDA. A configuração de teste não representa a infraestrutura do serviço público. Motor faster-whisper 1.2.1 / CTranslate2 4.8.4 / PyAV 16.1.0. Modelo `small`, beam size 5, VAD ativado, 8 threads de CPU. Dependências completas em `uv.lock`.
 
-Amostra sintética de voz, 12,59225 segundos. Três repetições por configuração, um processo novo por execução, pesos já presentes no disco. O tempo inclui carregamento do modelo e decodificação. O benchmark executa fora da fila pública, sem alterar a configuração dos visitantes.
+Amostra sintética de voz, 12,59225 segundos. Três repetições por configuração, um processo novo por execução, pesos do modelo previamente preparados. O tempo inclui carregamento do modelo e decodificação. O benchmark executa fora da fila pública, sem alterar a configuração dos visitantes.
 
 | Configuração | Mediana total | Mediana RTF | Maior pico RAM amostrado |
 | --- | ---: | ---: | ---: |
