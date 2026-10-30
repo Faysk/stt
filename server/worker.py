@@ -22,6 +22,7 @@ IDENTITY = os.getenv('TTS_WORKER_ID','notebook')
 client = httpx.Client(base_url=BASE,headers=HEADERS,timeout=60)
 
 ROOT = Path(__file__).resolve().parents[1]
+MAX_MEDIA_BYTES = 90 * 1024**2
 OUTBOX = Path(os.getenv('TTS_OUTBOX', str(ROOT / 'worker-outbox'))).resolve()
 
 def _outbox_path(job):
@@ -86,10 +87,21 @@ def _deliver(path, now=None):
             print(f"Delivery {data['id']}: quarantined HTTP {response.status_code}",flush=True)
             return 'quarantined'
         response.raise_for_status()
-        ack=response.json()
+        try:
+            ack=response.json()
+        except ValueError:
+            ack=None
         receipt=ack.get('receipt') if isinstance(ack,dict) and ack.get('ok') is True else None
         if not isinstance(receipt,str) or len(receipt)!=64 or any(c not in '0123456789abcdef' for c in receipt):
-            raise ValueError('Missing valid durable result receipt')
+            # A malformed successful response cannot prove receipt durability.
+            # Keep the result for review but avoid starving all other claims.
+            data['dead_letter']=True
+            data['dead_letter_status']=response.status_code
+            data['dead_letter_reason']='invalid_receipt'
+            data['dead_letter_at']=now
+            _atomic_json(path,data)
+            print(f"Delivery {data['id']}: quarantined invalid receipt",flush=True)
+            return 'quarantined'
         path.unlink(missing_ok=True)
         return 'acked'
     except (httpx.HTTPError,ValueError,OSError) as error:
@@ -206,8 +218,12 @@ def execute(job):
                                    headers={'x-lease':job['lease']},timeout=timeout) as r:
                     r.raise_for_status()
                     with (folder/'input.media').open('wb') as stream:
+                        transferred = 0
                         for chunk in r.iter_bytes():
                             check_budget()
+                            transferred += len(chunk)
+                            if transferred > MAX_MEDIA_BYTES:
+                                raise RuntimeError('Input exceeded media size budget')
                             stream.write(chunk)
                             check_budget()
             check_budget()  # Nothing may spawn after a slow or expired download.
