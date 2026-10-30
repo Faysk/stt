@@ -113,8 +113,12 @@ def _stop_child(proc):
     # The only process group targeted is the one created for this Popen handle.
     pid = getattr(proc,'pid',None)
     if pid and os.name == 'nt':
-        subprocess.run(['taskkill','/PID',str(pid),'/T','/F'],
-                       capture_output=True,timeout=10,check=False)
+        try:
+            subprocess.run(['taskkill','/PID',str(pid),'/T','/F'],
+                           capture_output=True,timeout=10,check=False)
+        except (OSError,subprocess.TimeoutExpired):
+            try: proc.kill()
+            except OSError: pass
     elif pid:
         try: os.killpg(pid,signal.SIGTERM)
         except ProcessLookupError: pass
@@ -209,7 +213,7 @@ def execute(job):
             _deliver(path)
     except Exception as error:
         print(f"Job {job['id']}: {type(error).__name__}",flush=True)
-        if not lost.is_set() and time.time() < deadline:
+        if not lost.is_set() and time.time() < job['expires']:
             # Processing failed: report failure. Transport errors never enter here.
             try:
                 path = _save_outbox(job,{'error':'Falha no executor. Tente outro arquivo ou avise o administrador.'})
