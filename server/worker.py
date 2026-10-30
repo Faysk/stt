@@ -58,8 +58,10 @@ def _deliver(path, now=None):
     if now >= data['expires']:
         path.unlink(missing_ok=True)  # Public retention has expired.
         return 'expired'
-    if data['stale']:
+    if data.get('stale'):
         return 'stale'
+    if data.get('dead_letter'):
+        return 'quarantined'
     if data['retry_at']>now:
         return 'pending'
     try:
@@ -67,14 +69,27 @@ def _deliver(path, now=None):
         response = client.post(f"/api/worker/{data['id']}/result",
                                json=data['payload'],timeout=remaining)
         if response.status_code==409:
-            # Do not overwrite the replacement lease; preserve evidence until expiry.
+            # Another lease or divergent completed result owns this job.
             data['stale']=True
+            data['last_status']=409
             _atomic_json(path,data)
             return 'stale'
+        # Permanent client errors cannot be repaired by retrying identical bytes.
+        # Preserve the private payload for operator diagnosis, but do not starve
+        # the entire worker queue for the remainder of the job's 24h TTL.
+        transient = response.status_code in (408,425,429) or response.status_code>=500
+        if response.status_code>=300 and not transient:
+            data['dead_letter']=True
+            data['dead_letter_status']=response.status_code
+            data['dead_letter_at']=now
+            _atomic_json(path,data)
+            print(f"Delivery {data['id']}: quarantined HTTP {response.status_code}",flush=True)
+            return 'quarantined'
         response.raise_for_status()
-        receipt = response.json().get('receipt')
-        if not isinstance(receipt,str) or len(receipt)!=64:
-            raise ValueError('Missing durable result receipt')
+        ack=response.json()
+        receipt=ack.get('receipt') if isinstance(ack,dict) and ack.get('ok') is True else None
+        if not isinstance(receipt,str) or len(receipt)!=64 or any(c not in '0123456789abcdef' for c in receipt):
+            raise ValueError('Missing valid durable result receipt')
         path.unlink(missing_ok=True)
         return 'acked'
     except (httpx.HTTPError,ValueError,OSError) as error:
@@ -98,10 +113,10 @@ def _drain_outbox():
         try:
             status = _deliver(path)
             if status == 'pending': pending = True
-        except (ValueError,OSError,KeyError) as exc:
-            # Corrupt outbox is never silently removed; an operator can inspect it.
-            print(f'Outbox {path.name}: {type(exc).__name__}',flush=True)
-            pending = True
+        except (ValueError,OSError,KeyError,TypeError) as exc:
+            # Corrupt records require intervention, but must not permanently
+            # prevent unrelated jobs from being claimed. Never discard a payload.
+            print(f'Outbox {path.name}: quarantine inspection needed ({type(exc).__name__})',flush=True)
     return pending
 
 def _stop_child(proc):
