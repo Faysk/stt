@@ -45,9 +45,13 @@ const data={
  workers:[{id:'notebook',seen:100,info:{system:'Windows',cpu:28,models:[{id:'small',revision:'a'.repeat(40)}],
     compute_types:{cpu:['int8','int16','float32','int8_float32'],cuda:['float16']},
     gpu:{name:'RTX 4070',vram_mb:8192,free_vram_mb:5000}}},
-    {id:'cpu-only',seen:100,info:{system:'Linux',cpu:8,models:[],compute_types:{cpu:['int8']}}}],
+    {id:'cpu-only',seen:100,info:{system:'Linux',cpu:8,models:[],compute_types:{cpu:['int8']}}},
+    {id:'s7-edge',seen:100,info:{system:'Android',cpu:6,engine:'whisper.cpp',
+      models:[{id:'tiny',revision:'ggml-tiny'}],
+      compute_types:{cpu:['float32'],cuda:[]}}}],
  catalog:[{id:'small',repository:'Systran/faster-whisper-small'},
-          {id:'turbo',repository:'mobiuslabsgmbh/faster-whisper-large-v3-turbo'}],
+          {id:'turbo',repository:'mobiuslabsgmbh/faster-whisper-large-v3-turbo'},
+          {id:'tiny',repository:'Systran/faster-whisper-tiny'}],
  now:100,preloads:[],ssh_targets:[{id:'s7-edge',label:'Galaxy S7 Edge',configured:true,command:'ssh -p 8022 u0_a999@192.0.2.10'}]
 };
 const ctx=vm.createContext({
@@ -72,10 +76,10 @@ const ctx=vm.createContext({
 vm.runInContext(fs.readFileSync('web/admin-enhancements.js','utf8'),ctx);
 (async()=>{
   ctx.renderSettings(data);
-  assert.equal(nodes['model-catalog'].children.length,2);
+  assert.equal(nodes['model-catalog'].children.length,3);
   const sshCard=nodes['ssh-targets'].children[0];
   assert.match(sshCard.textContent,/Galaxy S7 Edge · SSH/);
-  assert.match(sshCard.textContent,/nenhum executor STT online/);
+  assert.match(sshCard.textContent,/Worker conectado · capacidade do modelo\/CPU ainda não validada/);
   sshCard.querySelector('button').fire('click');
   await new Promise(resolve=>setImmediate(resolve));
   assert.equal(clipboard[0],'ssh -p 8022 u0_a999@192.0.2.10');
@@ -113,6 +117,29 @@ vm.runInContext(fs.readFileSync('web/admin-enhancements.js','utf8'),ctx);
   assert.equal(nodes['precision-cards'].children.length,2);
   assert.ok(!nodes['precision-cards'].children.some(card=>card.dataset.compute==='int16'),
     'Unsupported INT16 must not be offered on a CPU-only worker');
+  // Live S7 capabilities take priority over notebook's small/int8 selection.
+  const s7card=nodes.workers.children[2];
+  s7card.fire('click');
+  assert.equal(nodes.worker.value,'s7-edge');
+  assert.equal(nodes.model.value,'tiny');
+  assert.equal(nodes.device.value,'cpu');
+  assert.equal(nodes.compute.value,'float32');
+  assert.equal(nodes['precision-cards'].children.length,1);
+  assert.equal(nodes['precision-cards'].children[0].dataset.compute,'float32');
+  assert.match(nodes['settings-message'].textContent,/modo secundário/);
+  const oldRequests=calls.length;
+  const invalidModel=nodes['model-catalog'].children[0];
+  invalidModel.fire('click',{target:{closest:()=>null}});
+  assert.equal(nodes.model.value,'tiny','S7 cannot switch to notebook-only models');
+  assert.equal(calls.length,oldRequests,'S7 never schedules remote model preloads');
+
+  // Returning to the configured notebook restores its active precision/model.
+  nodes.workers.children[0].fire('click');
+  assert.equal(nodes.worker.value,'notebook');
+  assert.equal(nodes.model.value,'small');
+  assert.equal(nodes.device.value,'cpu');
+  assert.equal(nodes.compute.value,'int8');
+
   const html=fs.readFileSync('web/admin.html','utf8');
   assert.match(html,/id="configuration-state" hidden/);
   assert.doesNotMatch(html,/Seleção alternativa por menus|class="config-advanced"/);
