@@ -423,11 +423,6 @@
   gap: 7px;
   color: #92aecf;
 }
-.public-page .language-picker > span[aria-hidden] {
-  font-size: 15px;
-  line-height: 1;
-  color: #8fb8e6;
-}
 .public-page .language-picker select {
   inline-size: min(178px, 42vw);
   max-inline-size: none;
@@ -533,9 +528,6 @@
   }
 }
 @media (max-width: 620px) {
-  .public-page .language-picker > span[aria-hidden] {
-    display: none;
-  }
   .public-page .language-picker select {
     min-block-size: 44px;
     padding-inline: 10px;
