@@ -16,6 +16,26 @@ Uma API **nova lê arquivos legados**, mas uma API **antiga não encontra automa
 4. Separar problema de roteamento (Cloudflare/worker) de problema de código/dados: revertendo somente Cloudflare, a API atual deve continuar compatível com a mesma base.
 5. Confirmar plano de leitura dos resultados novos **antes** de retornar à versão antiga.
 
+## Ferramenta de preparação de exportações legadas (código em draft PR #29)
+
+O [draft PR #29](https://github.com/Faysk/tts/pull/29) acrescentou `scripts/restore_legacy_exports.py`, com testes sintéticos. A ferramenta materializa **somente** exportações de jobs válidos e não expirados em `generations-v1`; não apaga gerações, não altera SQLite e bloqueia SRT antigo quando o resultado novo não tem tempos.
+
+**Inspeção sem escrita, antes de qualquer intervenção** (substituir o caminho de exemplo pelo DATA real sem divulgar no GitHub):
+
+```powershell
+py scripts/restore_legacy_exports.py --data-root "D:\\dados-privados\\transcricao"
+```
+
+**Aplicação controlada APENAS após interromper todos os writers, fazer backup consistente e testar a restauração**:
+
+```powershell
+py scripts/restore_legacy_exports.py --data-root "D:\\dados-privados\\transcricao" --apply --ack-offline-and-backed-up
+```
+
+Um retorno `status=blocked` é **NO-GO**, não autorização para remover arquivos manualmente. O script verifica antes todos os resultados legados previstos e reutiliza cópias idênticas; numa falha após copiar alguns arquivos, **não reiniciar a API antiga** até inspecionar o erro, restaurar ou executar novamente e ter sucesso. Não cria snapshot por conta própria: o operador é responsável pelo backup e pela janela sem novos uploads/claims.
+
+**Limite importante:** CI verde prova cenários sintéticos; não comprova que rollback em volume NTFS/banco real/Cloudflare é seguro. A issue #28 centraliza os testes humanos obrigatórios.
+
 ## Ordem de rollback recomendada
 
 - **Apenas DNS/Cloudflare:** restaurar bindings, rotas, origin, Worker e Tunnel a partir da configuração exportada, **sem apagar** recursos novos nem sobrescrever ingress de serviço compartilhado. Checar TLS/hostname e chamadas não-GET. Nunca publicar secrets em logs.
