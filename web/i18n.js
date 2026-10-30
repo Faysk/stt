@@ -29,7 +29,7 @@ for(const [language,labels]of Object.entries(readerLabels))Object.assign(strings
 const readyLabels={en:'Ready',pt:'Pronta',es:'Lista',fr:'Prête',zh:'已完成',hi:'तैयार',ar:'جاهز',bn:'প্রস্তুত',id:'Selesai',ur:'تیار'};
 for(const [language,label]of Object.entries(readyLabels))strings[language].readyState=label;
 const languageNames={en:'English',zh:'中文',hi:'हिन्दी',es:'Español',ar:'العربية',fr:'Français',bn:'বাংলা',pt:'Português',id:'Bahasa Indonesia',ur:'اردو'};
-let preferred;try{preferred=localStorage.getItem('stt.language')||localStorage.getItem('tts.language');if(preferred)localStorage.setItem('stt.language',preferred)}catch{}
+let preferred;try{preferred=localStorage.getItem('stt.language');if(preferred)localStorage.setItem('stt.language',preferred)}catch{}
 const requested=new URLSearchParams(location.search).get('lang');
 let locale=[requested,preferred,...(navigator.languages||[navigator.language])].filter(Boolean).map(x=>x.toLowerCase().split('-')[0]).find(x=>strings[x])||'en';
 function t(key){return strings[locale][key]||strings.en[key]||key}
