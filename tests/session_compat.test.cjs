@@ -11,10 +11,13 @@ function storage(initial={}){
   const state=new Map(Object.entries(initial));
   return {state,getItem:key=>state.get(key)||null,setItem:(key,value)=>state.set(key,value)};
 }
-function session(initial){
+function session(initial,host='stt.faysk.dev'){
   const localStorage=storage(initial);
-  const key=vm.runInNewContext(publicSource+'\nkey',{localStorage,crypto});
-  return {key,data:localStorage.state};
+  const notice={hidden:true};
+  const document={getElementById:id=>id==='legacy-access'?notice:null};
+  const key=vm.runInNewContext(publicSource+'\nkey',
+    {localStorage,crypto,document,location:{hostname:host}});
+  return {key,data:localStorage.state,noticeHidden:notice.hidden};
 }
 function language(initial){
   const localStorage=storage(initial);
@@ -27,6 +30,8 @@ function language(initial){
 const old='a'.repeat(64), modern='b'.repeat(64);
 const migrated=session({'tts.session':old});
 assert.equal(migrated.key,old);
+assert.equal(migrated.noticeHidden,false);
+assert.equal(session({'tts.session':old},'tts.faysk.dev').noticeHidden,true);
 assert.equal(migrated.data.get('stt.session'),old);
 assert.equal(session({'tts.session':old,'stt.session':modern}).key,modern);
 const created=session({});
