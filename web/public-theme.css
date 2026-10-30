@@ -107,7 +107,7 @@ html[data-theme="dark"] .theme-sun,html[data-theme="light"] .theme-moon {display
   }
   .public-page .public-intro {margin:0;min-height:0;}
   .public-page .library-top {align-self:start;}
-  .public-page .library {grid-row:auto;margin:0;}
+  .public-page .library {grid-area:library;margin:0;}
   .public-page .submission-column {position:sticky;top:24px;margin:0;}
 }
 @media (max-width:1099px), (orientation:portrait) {
