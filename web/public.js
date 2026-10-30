@@ -50,6 +50,7 @@ $('submit').onclick=async()=>{
  const uploadPanel=document.querySelector('.upload-panel');
  uploadPanel.classList.add('is-busy');
  $('upload-visual').hidden=false;$('upload-progress').hidden=false;
+ $('upload-progress').setAttribute('aria-label',t(mode==='file'?'uploading':'preparing'));
  setUploadMeter(mode==='file'?0:null);
  message(t(mode==='file'?'uploading':'preparing')+'…');
  try{
