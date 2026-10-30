@@ -1,5 +1,5 @@
 [project]
-name = "faysk-tts"
+name = "faysk-stt"
 version = "0.1.0"
 description = "Public transcription lab with local inference and private browser sessions"
 requires-python = ">=3.11"
