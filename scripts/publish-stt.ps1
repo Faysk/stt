@@ -32,25 +32,49 @@ function HttpCode([string]$Url) {
     }
 }
 
-function Wait-SttPortReleased([int]$Port = 8765, [int]$TimeoutSeconds = 45) {
-    # Stop-Process may return while the OS is still tearing down an HTTP
-    # listener. Never blindly start a second Uvicorn instance.
-    $timer = [System.Diagnostics.Stopwatch]::StartNew()
-    while ($true) {
+function Wait-SttPortReleased(
+    [int]$Port = 8765,
+    [int]$TimeoutSeconds = 45,
+    [int]$StableMilliseconds = 3000
+) {
+    # A single empty TCP snapshot is not evidence that Uvicorn has stopped.
+    # A supervisor may immediately relaunch it while the release is starting.
+    $total = [System.Diagnostics.Stopwatch]::StartNew()
+    $free = $null
+    $reappeared = $false
+    while ($total.Elapsed.TotalSeconds -lt $TimeoutSeconds) {
         $listeners = @(
             Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue |
                 Where-Object { $null -ne $_ }
         )
         if ($listeners.Count -eq 0) {
-            Write-Host "Port $Port released; safe to attempt startup."
-            return
-        }
-        if ($timer.Elapsed.TotalSeconds -ge $TimeoutSeconds) {
-            $owners = (@($listeners | Select-Object -ExpandProperty OwningProcess -Unique) -join ', ')
-            throw "STT_PORT_NOT_RELEASED: port $Port still has listener PID(s): $owners. No restart/deploy attempted; inspect ownership before retrying."
+            if ($null -eq $free) {
+                $free = [System.Diagnostics.Stopwatch]::StartNew()
+            }
+            if ($free.Elapsed.TotalMilliseconds -ge $StableMilliseconds) {
+                Write-Host ("Port {0} had no listeners for {1} ms; attempting startup." -f $Port,$StableMilliseconds)
+                return
+            }
+        } else {
+            if ($null -ne $free -and -not $reappeared) {
+                Write-Warning "Port $Port became occupied again after briefly being free; possible external restart."
+                $reappeared = $true
+            }
+            $free = $null
         }
         Start-Sleep -Milliseconds 400
     }
+    # Do not claim a free port, kill an unknown owner or proceed with deploy.
+    $listeners = @(
+        Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue |
+            Where-Object { $null -ne $_ }
+    )
+    $owners = if ($listeners.Count) {
+        (@($listeners | Select-Object -ExpandProperty OwningProcess -Unique) -join ', ')
+    } else {
+        '(port not stable for required interval)'
+    }
+    throw "STT_PORT_NOT_RELEASED: port $Port did not remain free for $StableMilliseconds ms in $TimeoutSeconds seconds. Listener PID(s): $owners. Inspect owner before retrying; Tunnel preserved."
 }
 
 function Test-SttHttp([string]$Phase, [int]$Attempts = 1) {
