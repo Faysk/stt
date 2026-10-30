@@ -1,3 +1,6 @@
+[CmdletBinding()]
+param([switch]$SkipTunnel)
+
 $ErrorActionPreference = 'Stop'
 $projectPath = Split-Path $PSScriptRoot -Parent
 Set-Location -LiteralPath $projectPath
@@ -10,8 +13,12 @@ $api = Start-Process -FilePath $runtime -ArgumentList '-m','uvicorn','server.app
 $agent = Start-Process -FilePath $runtime -ArgumentList '-m','server.worker' -WorkingDirectory $projectPath -WindowStyle Hidden -RedirectStandardOutput (Join-Path $logs 'worker.log') -RedirectStandardError (Join-Path $logs 'worker-error.log') -PassThru
 @{api=$api.Id;worker=$agent.Id} | ConvertTo-Json | Set-Content (Join-Path $logs 'pids.json')
 $envText = Get-Content -LiteralPath (Join-Path $projectPath '.env') -Raw
-if ($envText -match '(?m)^STT_TUNNEL_(?:NAME|TOKEN)=') {
+if (-not $SkipTunnel -and $envText -match '(?m)^STT_TUNNEL_(?:NAME|TOKEN)=') {
   $tunnel = Start-Process -FilePath $runtime -ArgumentList '-m','server.tunnel' -WorkingDirectory $projectPath -WindowStyle Hidden -RedirectStandardOutput (Join-Path $logs 'tunnel.log') -RedirectStandardError (Join-Path $logs 'tunnel-error.log') -PassThru
   $tunnel.Id | Set-Content (Join-Path $logs 'tunnel.pid')
 }
-Write-Output 'API e executor iniciados. STT API, worker e túnel iniciados.'
+if ($SkipTunnel) {
+  Write-Output 'STT_TUNNEL_PRESERVED: API e worker iniciados sem alterar o Tunnel existente.'
+} else {
+  Write-Output 'API e executor iniciados. Tunnel iniciado apenas se configurado.'
+}
