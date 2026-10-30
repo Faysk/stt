@@ -42,7 +42,7 @@ const calls=[];
 const data={
  settings:{worker:'notebook',model:'small',device:'cpu',compute:'int8',paused:false},
  workers:[{id:'notebook',seen:100,info:{system:'Windows',cpu:28,models:[{id:'small',revision:'a'.repeat(40)}],
-    compute_types:{cpu:['int8','float32','int8_float32'],cuda:['float16']},
+    compute_types:{cpu:['int8','int16','float32','int8_float32'],cuda:['float16']},
     gpu:{name:'RTX 4070',vram_mb:8192,free_vram_mb:5000}}},
     {id:'cpu-only',seen:100,info:{system:'Linux',cpu:8,models:[],compute_types:{cpu:['int8']}}}],
  catalog:[{id:'small',repository:'Systran/faster-whisper-small'},
@@ -71,7 +71,9 @@ vm.runInContext(fs.readFileSync('web/admin-enhancements.js','utf8'),ctx);
 (async()=>{
   ctx.renderSettings(data);
   assert.equal(nodes['model-catalog'].children.length,2);
-  assert.equal(nodes['precision-cards'].children.length,3);
+  assert.equal(nodes['precision-cards'].children.length,4);
+  assert.ok(nodes['precision-cards'].children.some(card=>card.dataset.compute==='int16'),
+    'INT16 should be offered only when this CPU reports support');
   assert.match(nodes['precision-explainer'].textContent,/FP16.*GPU CUDA/);
   assert.ok(!nodes['precision-cards'].children.some(card=>card.dataset.compute==='float16'),
     'FP16 should not be offered for CPU, where the runtime falls back to FP32');
@@ -100,6 +102,8 @@ vm.runInContext(fs.readFileSync('web/admin-enhancements.js','utf8'),ctx);
   assert.equal(nodes.worker.value,'cpu-only');
   assert.equal(nodes['device-cards'].children[1].disabled,true);
   assert.equal(nodes['precision-cards'].children.length,2);
+  assert.ok(!nodes['precision-cards'].children.some(card=>card.dataset.compute==='int16'),
+    'Unsupported INT16 must not be offered on a CPU-only worker');
   const html=fs.readFileSync('web/admin.html','utf8');
   assert.match(html,/id="configuration-state" hidden/);
   assert.doesNotMatch(html,/Seleção alternativa por menus|class="config-advanced"/);

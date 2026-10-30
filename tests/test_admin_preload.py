@@ -114,3 +114,15 @@ def test_model_catalog_accepts_verified_pinned_snapshot_without_main_ref(tmp_pat
     loaded = next(m for m in installed_models(tmp_path) if m["id"] == "tiny")
     assert loaded["installed"] is True
     assert loaded["revision"] == revision
+
+
+def test_cpu_int16_is_only_accepted_with_worker_capability(environment):
+    client, _ = environment
+    config = {"worker": "notebook", "model": "small", "device": "cpu",
+              "compute": "int16", "paused": False}
+    client.post("/api/worker/claim", headers=WORKER,
+                json={"id": "notebook", "info": {"compute_types": {"cpu": ["int8", "float32"]}}})
+    assert client.put("/api/admin/settings", headers=ADMIN, json=config).status_code == 400
+    client.post("/api/worker/claim", headers=WORKER,
+                json={"id": "notebook", "info": {"compute_types": {"cpu": ["int8", "int16", "float32"]}}})
+    assert client.put("/api/admin/settings", headers=ADMIN, json=config).status_code == 200
