@@ -13,6 +13,7 @@ from unittest.mock import patch
 import httpx
 import pytest
 from fastapi.testclient import TestClient
+from starlette.requests import Request
 
 SESSION = {'x-session-key': 'a' * 64}
 WORKER = {'x-worker-key': 'test-worker'}
@@ -303,16 +304,17 @@ def test_heartbeat_and_requeue_are_serialized(lab,monkeypatch):
     maintenance_done=threading.Event()
     original=m.leased
     results=[]
-    def paused(c,key,lease):
-        row=original(c,key,lease)
+    def paused(c,key,lease,scope=None):
+        row=original(c,key,lease,scope)
         if threading.current_thread().name=='heartbeat-race':
             entered.set()
             assert resume.wait(5)
         return row
     monkeypatch.setattr(m,'leased',paused)
+    request=Request({'type':'http','method':'POST','path':'/api/worker/heartbeat','headers':[]})
     heartbeat_thread=threading.Thread(name='heartbeat-race',
         target=lambda:results.append(m.heartbeat(jid,m.Heartbeat(
-            lease=current['lease'],stage='transcribing',progress=83))))
+            lease=current['lease'],stage='transcribing',progress=83),request)))
     hb_error=[]
     def maintenance_thread():
         try: m.maintenance()
