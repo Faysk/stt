@@ -21,10 +21,11 @@ from pydantic import BaseModel, Field, model_validator
 from server.catalog import MODEL_CATALOG, installed_models
 from server import observability as obs
 from server.metrics import validate as validate_metrics
+from server.config import getenv
 
 load_dotenv()
 ROOT = Path(__file__).resolve().parents[1]
-DATA = Path(os.environ.get('TTS_DATA', str(ROOT))).resolve()
+DATA = Path(getenv('TTS_DATA', str(ROOT))).resolve()
 BLOB = DATA / 'blob'
 DB = DATA / 'db' / 'tts.sqlite3'
 MAX_BYTES = 90 * 1024 * 1024
@@ -207,8 +208,8 @@ async def guard(request: Request, call_next):
     length = request.headers.get('content-length')
     if length and (not length.isdecimal() or int(length)>MAX_BYTES+1024*1024):
         return JSONResponse({'detail':'Limite de 90 MB por arquivo.'}, status_code=413)
-    if os.getenv('TTS_REQUIRE_EDGE') == '1':
-        key = os.getenv('TTS_EDGE_KEY', '')
+    if getenv('TTS_REQUIRE_EDGE') == '1':
+        key = getenv('TTS_EDGE_KEY', '')
         if not key or not hmac.compare_digest(request.headers.get('x-edge-key', ''), key):
             return JSONResponse({'detail':'Origem não autorizada.'}, status_code=403)
     if request.url.path in ('/api/jobs/upload','/api/jobs/youtube') and request.method=='POST':
@@ -236,7 +237,7 @@ async def guard(request: Request, call_next):
     return response
 
 def secret(request, env, header):
-    expected = os.getenv(env, '')
+    expected = getenv(env, '')
     if not expected or not hmac.compare_digest(request.headers.get(header, ''), expected):
         raise HTTPException(401, 'Chave inválida.')
 
@@ -258,8 +259,8 @@ def preflight(request: Request):
         return None
     session = request.headers['x-session-key']
     own = hashlib.sha256(session.encode()).hexdigest()
-    ip = request.headers.get('x-tts-client') if os.getenv('TTS_REQUIRE_EDGE')=='1' else (request.client.host if request.client else None)
-    key = hashlib.sha256((os.getenv('TTS_EDGE_KEY','local') + (ip or 'unknown')).encode()).hexdigest()
+    ip = request.headers.get('x-tts-client') if getenv('TTS_REQUIRE_EDGE')=='1' else (request.client.host if request.client else None)
+    key = hashlib.sha256((getenv('TTS_EDGE_KEY','local') + (ip or 'unknown')).encode()).hexdigest()
     now = time.time()
     is_upload = request.url.path.endswith('/upload')
     slot = secrets.token_hex(16) if is_upload else None
@@ -286,7 +287,7 @@ def preflight(request: Request):
     return slot
 
 def client_tag(own):
-    return hmac.new(os.getenv('TTS_ADMIN_KEY','local').encode(),own.encode(),'sha256').hexdigest()[:16]
+    return hmac.new(getenv('TTS_ADMIN_KEY','local').encode(),own.encode(),'sha256').hexdigest()[:16]
 
 def public(r):
     result={k:r[k] for k in ('id','title','status','created','expires','started','finished','error','duration','elapsed','language','progress','stage','timing','result_state')}
@@ -319,8 +320,8 @@ def new_job(c, own, title, source, request=None):
         raise HTTPException(503, 'Armazenamento temporariamente indisponível.')
     jid = secrets.token_hex(16)
     c.execute("INSERT INTO jobs (id,owner,title,source,status,created,expires) VALUES (?,?,?,?,'uploading',?,?)", (jid,own,title,source,now,now+TTL))
-    ip=request.headers.get('x-tts-client') if request and os.getenv('TTS_REQUIRE_EDGE')=='1' else None
-    network=hmac.new(os.getenv('TTS_EDGE_KEY','local').encode(),ip.encode(),'sha256').hexdigest()[:16] if ip else None
+    ip=request.headers.get('x-tts-client') if request and getenv('TTS_REQUIRE_EDGE')=='1' else None
+    network=hmac.new(getenv('TTS_EDGE_KEY','local').encode(),ip.encode(),'sha256').hexdigest()[:16] if ip else None
     lang=request.headers.get('x-ui-language','en')[:12] if request else 'en'
     c.execute('UPDATE jobs SET client_tag=?,network_tag=?,ui_language=? WHERE id=?',(client_tag(own),network,lang,jid))
     obs.event(c,jid,'submitted',actor='session:'+client_tag(own),data={'source':'upload' if source=='upload' else 'youtube'})
@@ -509,7 +510,7 @@ def dashboard():
           counts={r['status']:r['n'] for r in c.execute('SELECT status,count(*) n FROM jobs GROUP BY status')},
           totals=dict(c.execute("SELECT count(*) jobs,coalesce(sum(duration),0) audio_seconds,coalesce(sum(elapsed),0) processing_seconds,coalesce(sum(input_bytes),0) bytes FROM jobs").fetchone()),
           host=host_snapshot,telemetry_error=telemetry_error,now=time.time(),versions=obs.package_versions(),
-          models=MODELS,catalog=installed_models(os.getenv('TTS_MODELS',str(ROOT/'models'))))
+          models=MODELS,catalog=installed_models(getenv('TTS_MODELS',str(ROOT/'models'))))
 
 def admin_job(r):
     data = {k:r[k] for k in ('id','title','status','outcome','created','started','finished','expires','heartbeat',
