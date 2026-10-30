@@ -713,7 +713,9 @@ def settings(s: Settings):
         cpu_types = info.get('compute_types',{})
         cpu_types = cpu_types.get('cpu',[]) if isinstance(cpu_types,dict) else []
         if (not row or time.time()-row['seen'] >= 90 or s.engine != 'whisper'
-                or s.device != 'cpu' or s.compute not in cpu_types or not prepared):
+                or info.get('engine') != 'whisper.cpp' or s.model != 'tiny'
+                or s.device != 'cpu' or s.compute != 'float32'
+                or s.compute not in cpu_types or not prepared):
             raise HTTPException(409,'S7 Edge apenas acessível por SSH: falta executor STT online com modelo e CPU compatíveis.')
     with db() as c:
         c.execute('UPDATE settings SET value=? WHERE id=1', (s.model_dump_json(),))
