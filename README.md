@@ -37,7 +37,7 @@ A interface se adapta ao idioma do navegador e oferece seleção manual em dez i
 
 Os arquivos e resultados ficam disponíveis por **24 horas** após o envio. O acesso às suas transcrições é associado a uma chave armazenada no navegador. Limpar os dados do site ou encerrar uma sessão anônima remove esse acesso.
 
-Após a expiração, o conteúdo e os dados usados para autorizar seu acesso são removidos. Métricas operacionais e identificadores pseudônimos de sessão e rede podem ser mantidos para análise de uso e prevenção de abuso. Eles não dão acesso aos arquivos. Não armazenamos endereços IP brutos no histórico de trabalhos.
+Após a expiração, o acesso é bloqueado imediatamente. A limpeza física é feita pela manutenção do servidor, com novas tentativas se ocorrerem erros de I/O ou bloqueios temporários; se o servidor estiver desligado, a purga só pode retomar quando ele voltar. Métricas operacionais e identificadores pseudônimos de sessão e rede podem ser mantidos para análise de uso e prevenção de abuso. Eles não dão acesso aos arquivos. Não armazenamos endereços IP brutos no histórico de trabalhos.
 
 ## Limites e qualidade
 
@@ -50,3 +50,7 @@ A qualidade varia conforme ruído, idioma, sotaque e características da gravaç
 O código está disponível sob a licença MIT. Para contribuir, executar sua própria instalação ou verificar o projeto, consulte o [guia de desenvolvimento](docs/DEVELOPMENT.md).
 
 As licenças dos modelos, bibliotecas e conteúdos utilizados continuam aplicáveis.
+
+## Motores experimentais e validação
+
+A operação pública utiliza Whisper. O suporte opcional a Qwen3-ASR e métricas detalhadas está em desenvolvimento, isolado do ambiente Whisper e sujeito a validação física antes de qualquer ativação pública. [Plano técnico, receitas e benchmark](docs/QWEN_AND_BENCHMARK.md).
