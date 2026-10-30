@@ -264,7 +264,21 @@ def admin(request: Request):
     secret(request, 'STT_ADMIN_KEY', 'x-admin-key')
 
 def worker(request: Request):
-    secret(request, 'STT_WORKER_KEY', 'x-worker-key')
+    """S7 has an independently rotatable key scoped to its own jobs."""
+    presented = request.headers.get('x-worker-key','')
+    scoped = getenv('STT_S7_WORKER_KEY','')
+    shared = getenv('STT_WORKER_KEY','')
+    if scoped and hmac.compare_digest(presented,scoped):
+        request.state.worker_scope = 's7-edge'
+    elif shared and hmac.compare_digest(presented,shared):
+        request.state.worker_scope = None
+    else:
+        raise HTTPException(401,'Chave inválida.')
+
+def require_s7_scope(request: Request, identity: str):
+    scope = getattr(request.state,'worker_scope',None)
+    if scope is not None and scope != identity:
+        raise HTTPException(403,'Chave restrita a outro executor.')
 
 def owner(request: Request):
     token = request.headers.get('x-session-key', '')
@@ -742,7 +756,10 @@ def request_model_preload(value: ModelPreloadRequest):
                     created=now,updated=now,revision=None,error=None)
 
 @app.post('/api/worker/model-preloads/claim',dependencies=[Depends(worker)])
-def claim_model_preload(value: ModelPreloadClaim):
+def claim_model_preload(value: ModelPreloadClaim, request: Request):
+    require_s7_scope(request,value.worker)
+    if value.worker == 's7-edge':
+        return {'operation':None}  # GGML weights are provisioned offline by the operator.
     if not valid_worker_name(value.worker):
         raise HTTPException(400,'Executor inválido.')
     now=time.time()
@@ -758,7 +775,10 @@ def claim_model_preload(value: ModelPreloadClaim):
         return {'operation':dict(op)|{'status':'running','updated':now}}
 
 @app.post('/api/worker/model-preloads/{pid}/report',dependencies=[Depends(worker)])
-def report_model_preload(pid: str,value: ModelPreloadReport):
+def report_model_preload(pid: str,value: ModelPreloadReport, request: Request):
+    require_s7_scope(request,value.worker)
+    if value.worker == 's7-edge':
+        raise HTTPException(409,'O S7 usa modelos GGML geridos localmente.')
     if len(pid)!=32 or any(ch not in '0123456789abcdef' for ch in pid):
         raise HTTPException(404,'Operação não encontrada.')
     if not valid_worker_name(value.worker):
@@ -786,7 +806,8 @@ class Claim(BaseModel):
     info: dict = Field(default_factory=dict)
 
 @app.post('/api/worker/claim', dependencies=[Depends(worker)])
-def claim(w: Claim):
+def claim(w: Claim, request: Request):
+    require_s7_scope(request,w.id)
     now = time.time()
     info=json.dumps(w.info)
     if len(info)>8000: raise HTTPException(413,'Metadados do executor excedem o limite.')
@@ -796,11 +817,33 @@ def claim(w: Claim):
         cfg = json.loads(c.execute('SELECT value FROM settings WHERE id=1').fetchone()[0])
         if cfg['paused'] or cfg['worker'] != w.id:
             return {'job':None}
+        if w.id == 's7-edge':
+            # Opt-in stays off until the operator has provisioned the scoped key
+            # and verified live inference. No SSH-only entry ever claims work.
+            if getenv('STT_S7_ENABLED','0') != '1':
+                return {'job':None}
+            models = w.info.get('models',[])
+            types = w.info.get('compute_types',{})
+            cpu_types = types.get('cpu',[]) if isinstance(types,dict) else []
+            if (w.info.get('engine') != 'whisper.cpp' or cfg.get('engine','whisper') != 'whisper'
+                    or cfg['device'] != 'cpu' or cfg['model'] != 'tiny'
+                    or cfg['compute'] != 'float32' or 'float32' not in cpu_types
+                    or not isinstance(models,list) or not any(isinstance(m,dict) and m.get('id')=='tiny' for m in models)):
+                return {'job':None}
         if cfg.get('engine','whisper')=='qwen3' and cfg['model'] not in w.info.get('qwen_models',[]):
             return {'job':None}
         if c.execute("SELECT 1 FROM jobs WHERE status='running' AND worker=?",(w.id,)).fetchone():
             return {'job':None}
-        r = c.execute("SELECT * FROM jobs WHERE status='queued' AND expires>? ORDER BY priority DESC,created,id LIMIT 1", (now,)).fetchone()
+        candidates = c.execute("SELECT * FROM jobs WHERE status='queued' AND expires>? ORDER BY priority DESC,created,id LIMIT 20",(now,)).fetchall()
+        if w.id == 's7-edge':
+            # Safe first rollout: short upload audio only. Never lease YouTube,
+            # video, or large media to this phone and then fail them immediately.
+            permitted={'.wav','.mp3','.m4a','.ogg','.flac','.aac','.opus'}
+            r = next((item for item in candidates
+                      if item['source']=='upload' and 0 < item['input_bytes'] <= 8*1024**2
+                      and Path(item['title'] or '').suffix.lower() in permitted),None)
+        else:
+            r = candidates[0] if candidates else None
         if not r: return {'job':None}
         lease = secrets.token_hex(32)
         gpu = w.info.get('gpu') if isinstance(w.info.get('gpu'),dict) else None
@@ -810,14 +853,16 @@ def claim(w: Claim):
         obs.event(c,r['id'],'started',w.id,dict(model=cfg['model'],device=cfg['device'],compute=cfg['compute']))
         return {'job':dict(id=r['id'],source=r['source'],lease=lease,expires=r['expires'],**cfg)}
 
-def leased(c,jid,lease):
+def leased(c,jid,lease,scope=None):
     r = c.execute("SELECT * FROM jobs WHERE id=? AND lease=? AND status='running' AND expires>?", (jid,lease,time.time())).fetchone()
     if not r: raise HTTPException(409,'Lease expirado.')
+    if scope is not None and r['worker'] != scope:
+        raise HTTPException(403,'Chave restrita a outro executor.')
     return r
 
 @app.get('/api/worker/{jid}/input', dependencies=[Depends(worker)])
 def worker_input(jid: str, request: Request):
-    with db() as c: leased(c,jid,request.headers.get('x-lease',''))
+    with db() as c: leased(c,jid,request.headers.get('x-lease',''),getattr(request.state,'worker_scope',None))
     p = BLOB / jid / 'input.media'
     if not p.exists(): raise HTTPException(404,'Entrada indisponível.')
     return FileResponse(p)
@@ -829,10 +874,10 @@ class Heartbeat(BaseModel):
     runtime: dict = Field(default_factory=dict)
 
 @app.post('/api/worker/{jid}/heartbeat', dependencies=[Depends(worker)])
-def heartbeat(jid: str, h: Heartbeat):
+def heartbeat(jid: str, h: Heartbeat, request: Request):
     with db() as c:
         c.execute('BEGIN IMMEDIATE')
-        r = leased(c,jid,h.lease)
+        r = leased(c,jid,h.lease,getattr(request.state,'worker_scope',None))
         now = time.time()
         changed = c.execute("""UPDATE jobs SET heartbeat=?,progress=?,stage=?
                                WHERE id=? AND lease=? AND status='running' AND expires>?""",
@@ -898,18 +943,21 @@ def timestamp(n):
     return f'{ms//3600000:02}:{ms//60000%60:02}:{ms//1000%60:02},{ms%1000:03}'
 
 @app.post('/api/worker/{jid}/result', dependencies=[Depends(worker)])
-def result(jid: str, result: Result):
+def result(jid: str, result: Result, request: Request):
     canonical = json.dumps(result.model_dump(),sort_keys=True,ensure_ascii=False,separators=(',',':'),allow_nan=False)
     receipt = hashlib.sha256(canonical.encode('utf-8')).hexdigest()
     lease_hash = hashlib.sha256(result.lease.encode()).hexdigest()
     with db() as c:
         c.execute('BEGIN IMMEDIATE')
-        previous = c.execute('SELECT status,expires,receipt_hash,receipt_lease FROM jobs WHERE id=?',(jid,)).fetchone()
+        scope = getattr(request.state,'worker_scope',None)
+        previous = c.execute('SELECT status,expires,receipt_hash,receipt_lease,worker FROM jobs WHERE id=?',(jid,)).fetchone()
+        if previous and scope is not None and previous['worker'] != scope:
+            raise HTTPException(403,'Chave restrita a outro executor.')
         if previous and previous['expires']>time.time() and previous['status'] in ('done','failed'):
             if previous['receipt_hash']==receipt and previous['receipt_lease']==lease_hash:
                 return {'ok':True,'receipt':receipt,'duplicate':True}
             raise HTTPException(409,'Tentativa concluída com resultado diferente.')
-        r = leased(c,jid,result.lease)
+        r = leased(c,jid,result.lease,scope)
         if not result.error:
             folder = BLOB / jid
             folder.mkdir(exist_ok=True)
