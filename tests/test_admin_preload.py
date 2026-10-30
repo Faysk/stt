@@ -101,3 +101,16 @@ def test_gpu_name_is_snapshotted_from_worker_at_claim(environment):
     assert details["gpu_name"] == "Test NVIDIA GPU"
     assert details["device"] == "cuda"
     assert details["compute"] == "float16"
+
+
+def test_model_catalog_accepts_verified_pinned_snapshot_without_main_ref(tmp_path):
+    from server.catalog import installed_models
+    revision = "a" * 40
+    base = tmp_path / "models--Systran--faster-whisper-tiny" / "snapshots" / revision
+    base.mkdir(parents=True)
+    (base / "model.bin").write_bytes(b"test binary")
+    assert next(m for m in installed_models(tmp_path) if m["id"] == "tiny")["installed"] is False
+    (base / "config.json").write_text("{}", encoding="utf-8")
+    loaded = next(m for m in installed_models(tmp_path) if m["id"] == "tiny")
+    assert loaded["installed"] is True
+    assert loaded["revision"] == revision
