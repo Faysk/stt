@@ -13,6 +13,8 @@ ur:{title:'آڈیو سے متن',intro:'فائل شامل کریں یا YouTube 
 };
 const readerLabels={en:['Timestamps','Text'],pt:['Com tempos','Texto'],es:['Con tiempos','Texto'],fr:['Horodatage','Texte'],zh:['时间戳','纯文本'],hi:['समय चिह्न','टेक्स्ट'],ar:['التوقيت','النص'],bn:['সময়চিহ্ন','লেখা'],id:['Waktu','Teks'],ur:['اوقات','متن']};
 for(const [language,labels]of Object.entries(readerLabels))Object.assign(strings[language],{timestamps:labels[0],plainText:labels[1]});
+const readyLabels={en:'Ready',pt:'Pronta',es:'Lista',fr:'Prête',zh:'已完成',hi:'तैयार',ar:'جاهز',bn:'প্রস্তুত',id:'Selesai',ur:'تیار'};
+for(const [language,label]of Object.entries(readyLabels))strings[language].readyState=label;
 const languageNames={en:'English',zh:'中文',hi:'हिन्दी',es:'Español',ar:'العربية',fr:'Français',bn:'বাংলা',pt:'Português',id:'Bahasa Indonesia',ur:'اردو'};
 let preferred;try{preferred=localStorage.getItem('tts.language')}catch{}
 const requested=new URLSearchParams(location.search).get('lang');

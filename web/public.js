@@ -50,7 +50,7 @@ function render(){
  if(!visible.length){const e=el('div','empty');e.append(el('span','empty-mark','≋'),el('strong','',t(jobs.length?'noMatch':'empty')),el('p','muted',t('emptyHint')));$('jobs').append(e);return}
  for(const j of visible){
   const card=el('article','transcript-card');const head=el('div','transcript-card-head');const icon=el('span','file-symbol',j.title==='YouTube'||j.title?.includes('YouTube')?'↗':'≋');const info=el('div','transcript-info');const name=el('strong','transcript-title',j.title||'Transcript');info.append(name,el('span','transcript-date',date(j.created)));head.append(icon,info);card.append(head);
-  const state=el('span',`badge state-${j.status}`,t(j.status==='running'?(j.stage||'transcribing'):j.status));if(j.status==='queued'&&j.position)state.append(document.createTextNode(` · #${j.position}`));if(j.status==='running'&&j.progress>0)state.append(document.createTextNode(` · ${Math.round(j.progress)}%`));
+  const state=el('span',`badge state-${j.status}`,t(j.status==='done'?'readyState':j.status==='running'?(j.stage||'transcribing'):j.status));if(j.status==='queued'&&j.position)state.append(document.createTextNode(` · #${j.position}`));if(j.status==='running'&&j.progress>0)state.append(document.createTextNode(` · ${Math.round(j.progress)}%`));
   const meta=el('div','transcript-card-meta');meta.append(state,el('span','',duration(j.duration)),el('span','expiry',`${t('expires')} ${date(j.expires)}`));card.append(meta);
   if(j.status==='failed')card.append(el('p','error small',t('error')));
   if(j.status==='done'){
