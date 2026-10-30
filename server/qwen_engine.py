@@ -228,7 +228,7 @@ def run(config):
                              'transformers':__import__('transformers').__version__,
                              'hardware':hardware})
     except Exception as error:
-        print(f'Qwen inference failed: {type(error).__name__}: {str(error)[:100]}',file=sys.stderr,flush=True)
+        print(f'Qwen inference failed: {type(error).__name__}',file=sys.stderr,flush=True)
         output={'error':'Não foi possível transcrever com o motor Qwen. Verifique o executor e o modelo local.'}
     finally:
         elapsed=time.perf_counter()-start
