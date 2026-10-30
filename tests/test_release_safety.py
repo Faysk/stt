@@ -169,3 +169,48 @@ def test_qwen_exception_does_not_expose_private_paths(tmp_path,monkeypatch,capsy
     assert sensitive not in output.err
     assert sensitive not in json.dumps(result)
     assert result.get('error')
+
+
+def test_real_api_result_can_be_restored_for_offline_legacy_rollback(tmp_path,monkeypatch):
+    """Integration test against the actual SQLite schema and result renderer.
+
+    This deliberately uses synthetic media and a synthetic result, without
+    running a model, downloading weights or touching a production database.
+    """
+    from scripts.restore_legacy_exports import main as restore
+    monkeypatch.setenv('TTS_DATA',str(tmp_path))
+    monkeypatch.setenv('TTS_ADMIN_KEY','test-admin')
+    monkeypatch.setenv('TTS_WORKER_KEY','test-worker')
+    monkeypatch.setenv('TTS_REQUIRE_EDGE','0')
+    for suffix in ('DATA','ADMIN_KEY','WORKER_KEY','REQUIRE_EDGE'):
+        monkeypatch.delenv('STT_'+suffix,raising=False)
+    session={'x-session-key':'a'*64}
+    worker_header={'x-worker-key':'test-worker'}
+    with patch('dotenv.load_dotenv',lambda *a,**kw:None):
+        import server.app as module
+        module=importlib.reload(module)
+        with TestClient(module.app) as client:
+            upload=client.post('/api/jobs/upload',headers=session,
+                files={'file':('fixture.wav',b'synthetic fixture','audio/wav')})
+            assert upload.status_code==201,upload.text
+            jid=upload.json()['id']
+            claimed=client.post('/api/worker/claim',headers=worker_header,
+                json={'id':'notebook'}).json()['job']
+            assert claimed['id']==jid
+            result=client.post(f'/api/worker/{jid}/result',headers=worker_header,
+                json={'lease':claimed['lease'],'duration':2,
+                      'result_state':'complete',
+                      'segments':[{'start':0,'end':2,'text':'integration fixture'}]})
+            assert result.status_code==200,result.text
+        flat=module.BLOB/jid/'transcript.txt'
+        assert not flat.exists()
+        assert restore(['--data-root',str(tmp_path)])==0
+        assert not flat.exists()
+        assert restore(['--data-root',str(tmp_path),
+                       '--apply','--ack-offline-and-backed-up'])==0
+        assert flat.read_text(encoding='utf-8')=='integration fixture'
+        assert (module.BLOB/jid/'transcript.srt').is_file()
+        # Generations remain readable by modern APIs after flat restoration.
+        with TestClient(module.app) as client:
+            assert client.get(f'/api/jobs/{jid}/download/txt',headers=session).text=='integration fixture'
+            assert client.get(f'/api/jobs/{jid}/download/srt',headers=session).status_code==200
