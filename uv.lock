@@ -553,7 +553,7 @@ wheels = [
 ]
 
 [[package]]
-name = "faysk-tts"
+name = "faysk-stt"
 version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
