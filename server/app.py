@@ -688,8 +688,84 @@ def settings(s: Settings):
     return s
 
 
+
 class ModelPreloadRequest(BaseModel):
-    worker: str = Field(min_length=1,max_length=80,pattern=r'^[a-zA-Z0-9_-]+
+    worker: str = Field(min_length=1,max_length=80)
+    model: str
+
+class ModelPreloadClaim(BaseModel):
+    worker: str = Field(min_length=1,max_length=80)
+
+class ModelPreloadReport(BaseModel):
+    worker: str = Field(min_length=1,max_length=80)
+    status: str
+    revision: str | None = Field(default=None,max_length=80)
+    error: str | None = Field(default=None,max_length=80)
+
+def valid_worker_name(value):
+    return bool(value) and all(ch in 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-' for ch in value)
+
+@app.post('/api/admin/model-preloads',dependencies=[Depends(admin)],status_code=202)
+def request_model_preload(value: ModelPreloadRequest):
+    if value.model not in MODELS or not valid_worker_name(value.worker):
+        raise HTTPException(400,'Executor ou modelo inválido.')
+    now=time.time()
+    with db() as c:
+        c.execute('BEGIN IMMEDIATE')
+        if not c.execute('SELECT 1 FROM workers WHERE id=?',(value.worker,)).fetchone():
+            raise HTTPException(404,'Executor ainda não registrado.')
+        existing=c.execute("""SELECT * FROM model_preloads WHERE worker=? AND model=?
+                AND status IN ('pending','running') ORDER BY created DESC LIMIT 1""",
+                           (value.worker,value.model)).fetchone()
+        if existing:
+            return dict(existing)
+        operation=secrets.token_hex(16)
+        c.execute('INSERT INTO model_preloads VALUES(?,?,?,?,?,?,?,?)',
+                  (operation,value.worker,value.model,'pending',now,now,None,None))
+        return dict(id=operation,worker=value.worker,model=value.model,status='pending',
+                    created=now,updated=now,revision=None,error=None)
+
+@app.post('/api/worker/model-preloads/claim',dependencies=[Depends(worker)])
+def claim_model_preload(value: ModelPreloadClaim):
+    if not valid_worker_name(value.worker):
+        raise HTTPException(400,'Executor inválido.')
+    now=time.time()
+    with db() as c:
+        c.execute('BEGIN IMMEDIATE')
+        if c.execute("SELECT 1 FROM jobs WHERE status IN ('queued','running') LIMIT 1").fetchone():
+            return {'operation':None}
+        op=c.execute("""SELECT * FROM model_preloads WHERE worker=? AND status='pending'
+                        ORDER BY created LIMIT 1""",(value.worker,)).fetchone()
+        if not op:
+            return {'operation':None}
+        c.execute("UPDATE model_preloads SET status='running',updated=? WHERE id=?",(now,op['id']))
+        return {'operation':dict(op)|{'status':'running','updated':now}}
+
+@app.post('/api/worker/model-preloads/{pid}/report',dependencies=[Depends(worker)])
+def report_model_preload(pid: str,value: ModelPreloadReport):
+    if len(pid)!=32 or any(ch not in '0123456789abcdef' for ch in pid):
+        raise HTTPException(404,'Operação não encontrada.')
+    if not valid_worker_name(value.worker):
+        raise HTTPException(400,'Executor inválido.')
+    if value.status not in ('running','ready','failed'):
+        raise HTTPException(400,'Estado inválido.')
+    with db() as c:
+        c.execute('BEGIN IMMEDIATE')
+        op=c.execute('SELECT * FROM model_preloads WHERE id=? AND worker=?',
+                     (pid,value.worker)).fetchone()
+        if not op:
+            raise HTTPException(404,'Operação não encontrada.')
+        if op['status'] in ('ready','failed'):
+            return {'ok':True,'status':op['status']}
+        if op['status']!='running':
+            raise HTTPException(409,'Operação não iniciada.')
+        c.execute('UPDATE model_preloads SET status=?,updated=?,revision=?,error=? WHERE id=?',
+                  (value.status,time.time(),value.revision if value.status=='ready' else None,
+                   value.error if value.status=='failed' else None,pid))
+    return {'ok':True,'status':value.status}
+
+
+class Claim(BaseModel):
     id: str = Field(pattern=r'^[a-zA-Z0-9_-]{1,80}$')
     info: dict = Field(default_factory=dict)
 
