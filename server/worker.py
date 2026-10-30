@@ -63,6 +63,51 @@ def _save_outbox(job, result):
                            payload=dict(result,lease=job['lease']),attempts=0,retry_at=0,stale=False))
     return path
 
+def _report_invalid_result(path, data, now):
+    """Tell the API that a schema-invalid result cannot be published.
+
+    Keep the original private outbox item for bounded operator inspection.
+    Never send or log transcript text as part of this failure notice.
+    """
+    if (data.get('rejection_notified') or data.get('stale') or
+            data.get('dead_letter_status') != 422 or
+            data.get('retry_at', 0) > now):
+        return
+    status = None
+    try:
+        remaining = max(1, min(30, data['expires'] - now))
+        response = client.post(
+            f"/api/worker/{data['id']}/reject",
+            json={'lease':data['lease'], 'reason':'result_schema_rejected'},
+            timeout=remaining)
+        status = response.status_code
+        if status == 409:
+            # Another lease or terminal state owns this attempt.
+            data['stale'] = True
+        elif status == 200:
+            try:
+                receipt = response.json()
+            except ValueError:
+                receipt = None
+            if isinstance(receipt, dict) and receipt.get('ok') is True:
+                data['rejection_notified'] = True
+    except httpx.HTTPError:
+        pass  # Preserve and retry until lease expiry or a confirmed 409.
+    if not data.get('rejection_notified') and not data.get('stale'):
+        attempts = data.get('rejection_notify_attempts', 0) + 1
+        data['rejection_notify_attempts'] = attempts
+        data['retry_at'] = now + min(60, 2 ** min(attempts, 6))
+    if status is not None:
+        data['rejection_notify_status'] = status
+    _atomic_json(path, data)
+    if data.get('rejection_notified'):
+        print(f"Delivery {data['id']}: schema rejection reported to API", flush=True)
+    elif data.get('stale'):
+        print(f"Delivery {data['id']}: rejection lease stale", flush=True)
+    else:
+        print(f"Delivery {data['id']}: rejection report pending", flush=True)
+
+
 def _deliver(path, now=None):
     """Only a positive API receipt can delete a completed result."""
     data = json.loads(path.read_text(encoding='utf-8'))
@@ -73,6 +118,10 @@ def _deliver(path, now=None):
     if data.get('stale'):
         return 'stale'
     if data.get('dead_letter'):
+        if data.get('dead_letter_status') == 422:
+            _report_invalid_result(path, data, now)
+            if data.get('stale'): return 'stale'
+            if not data.get('rejection_notified'): return 'pending'
         return 'quarantined'
     if data['retry_at']>now:
         return 'pending'
@@ -106,6 +155,10 @@ def _deliver(path, now=None):
             data['dead_letter_at']=now
             _atomic_json(path,data)
             print(f"Delivery {data['id']}: quarantined HTTP {response.status_code}",flush=True)
+            if response.status_code == 422:
+                _report_invalid_result(path, data, now)
+                if data.get('stale'): return 'stale'
+                if not data.get('rejection_notified'): return 'pending'
             return 'quarantined'
         response.raise_for_status()
         try:
