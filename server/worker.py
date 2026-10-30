@@ -291,6 +291,72 @@ def execute(job):
         finished.set()
         thread.join(timeout=2)
 
+
+# Runtime capability inventory: this data belongs to the worker, not the API host.
+_CAPS_CACHE = (0.0, None)
+def worker_capabilities():
+    global _CAPS_CACHE
+    now=time.time()
+    if _CAPS_CACHE[1] is not None and now-_CAPS_CACHE[0] < 90:
+        return _CAPS_CACHE[1]
+    caps={'system':platform.system(),'machine':platform.machine(),
+          'cpu':os.cpu_count(),'engine':'faster-whisper',
+          'qwen_models':_qwen_models(),'versions':package_versions(),
+          'compute_types':{'cpu':[],'cuda':[]},'models':[]}
+    try:
+        import ctranslate2
+        caps['compute_types']['cpu']=sorted(ctranslate2.get_supported_compute_types('cpu'))
+    except (ImportError,RuntimeError,ValueError,OSError):
+        pass
+    try:
+        flags={'creationflags':subprocess.CREATE_NO_WINDOW} if os.name=='nt' else {}
+        response=subprocess.run(['nvidia-smi','--query-gpu=name,memory.total','--format=csv,noheader,nounits'],
+                                capture_output=True,text=True,timeout=3,**flags)
+        if response.returncode==0 and response.stdout.strip():
+            fields=[part.strip() for part in response.stdout.splitlines()[0].split(',')]
+            caps['gpu']={'name':fields[0][:120],'vram_mb':int(float(fields[1]))}
+            try:
+                import ctranslate2
+                caps['compute_types']['cuda']=sorted(ctranslate2.get_supported_compute_types('cuda'))
+            except (ImportError,RuntimeError,ValueError,OSError):
+                pass
+    except (OSError,ValueError,IndexError,subprocess.TimeoutExpired):
+        pass
+    try:
+        from server.catalog import installed_models
+        caps['models']=[{'id':item['id'],'revision':item['revision']}
+            for item in installed_models(getenv('STT_MODELS',str(ROOT/'models'))) if item['installed']]
+    except (OSError,ValueError):
+        pass
+    _CAPS_CACHE=(now,caps)
+    return caps
+
+def prepare_model(op):
+    # Disk cache only. Run when no user job is queued; never claim warm VRAM.
+    operation=op['id']
+    outcome={'worker':IDENTITY,'status':'failed','error':'PRELOAD_FAILED'}
+    try:
+        from server.catalog import MODEL_CATALOG
+        from huggingface_hub import snapshot_download
+        repository=next(item['repository'] for item in MODEL_CATALOG if item['id']==op['model'])
+        root=Path(getenv('STT_MODELS',str(ROOT/'models'))).resolve()
+        root.mkdir(parents=True,exist_ok=True)
+        snapshot=Path(snapshot_download(repo_id=repository,cache_dir=str(root),
+                     allow_patterns=['config.json','model.bin','tokenizer.json',
+                                     'vocabulary.*','preprocessor_config.json']))
+        if not (snapshot/'model.bin').is_file() or not (snapshot/'config.json').is_file():
+            raise ValueError('Incomplete model cache')
+        outcome={'worker':IDENTITY,'status':'ready','revision':snapshot.name}
+        global _CAPS_CACHE
+        _CAPS_CACHE=(0.0,None)
+    except Exception as exc:
+        outcome['error']='PRELOAD_'+type(exc).__name__.upper()[:60]
+    try:
+        reply=client.post('/api/worker/model-preloads/'+operation+'/report',json=outcome)
+        reply.raise_for_status()
+    except httpx.HTTPError as exc:
+        print('Preload report failed: '+type(exc).__name__,flush=True)
+
 def main():
     print(f'Executor {IDENTITY} conectado a {BASE}',flush=True)
     while True:
@@ -298,11 +364,16 @@ def main():
             if _drain_outbox():
                 time.sleep(5)
                 continue
-            r=client.post('/api/worker/claim',json={'id':IDENTITY,'info':{'system':platform.system(),'machine':platform.machine(),'cpu':os.cpu_count(),'engine':'faster-whisper','qwen_models':_qwen_models(),'versions':package_versions()}})
+            r=client.post('/api/worker/claim',json={'id':IDENTITY,'info':worker_capabilities()})
             r.raise_for_status()
             job=r.json()['job']
             if job: execute(job)
-            else: time.sleep(5)
+            else:
+                preload=client.post('/api/worker/model-preloads/claim',json={'worker':IDENTITY})
+                preload.raise_for_status()
+                operation=preload.json().get('operation')
+                if operation: prepare_model(operation)
+                else: time.sleep(5)
         except (httpx.HTTPError,ValueError) as e:
             print(f'Conexão: {type(e).__name__}; nova tentativa em 10s',flush=True)
             time.sleep(10)
