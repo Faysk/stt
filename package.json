@@ -4,7 +4,7 @@
   "type": "module",
   "scripts": {
     "deploy": "node scripts/deploy-stt.mjs",
-    "check": "node --check edge/worker.js && node --check web/i18n.js && node --check web/public.js && node --check web/dashboard.js && node --check web/admin-enhancements.js && node tests/public_motion.test.cjs",
+    "check": "node --check edge/worker.js && node --check web/i18n.js && node --check web/public.js && node --check web/theme.js && node --check web/dashboard.js && node --check web/admin-enhancements.js && node tests/public_motion.test.cjs && node tests/public_theme.test.cjs",
     "deploy:stt:dry-run": "wrangler deploy --config wrangler.stt.jsonc --dry-run"
   },
   "devDependencies": {
