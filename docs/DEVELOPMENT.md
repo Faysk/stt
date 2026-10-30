@@ -18,7 +18,7 @@ npm run deploy:stt:dry-run
 
 Crie `.env` privado a partir de `.env.example`. Use apenas variáveis `STT_*`. Defina `STT_DATA=.` caso a base local seja a própria raiz do projeto; o banco de testes novo é `db/stt.sqlite3`. Nenhuma variável de outro serviço é usada. Mantenha `STT_ADMIN_KEY`, `STT_WORKER_KEY` e `STT_EDGE_KEY` privadas e distintas; use `STT_REQUIRE_EDGE=1` em produção.
 
-Para comunicação por Tunnel configure `STT_CLOUDFLARED` e `STT_TUNNEL_TOKEN` privados, apontando exclusivamente para a origem `stt-origin.faysk.dev`. O Worker `faysk-stt` usa o `wrangler.stt.jsonc` e disponibiliza `https://stt.faysk.dev`.
+Para o Tunnel remoto **sem copiar token**, autentique o Wrangler (`npx wrangler login`), crie ou localize o Tunnel remoto `faysk-stt` e configure no painel o hostname `stt-origin.faysk.dev` → `http://127.0.0.1:8765`. Configure `STT_TUNNEL_NAME=faysk-stt` na `.env`, sem `STT_TUNNEL_TOKEN`. O módulo `server.tunnel` chamará `wrangler tunnel run faysk-stt`, que obtém o token pela sessão OAuth do Wrangler. Alternativamente, para execução não interativa configure **somente** `STT_CLOUDFLARED` e `STT_TUNNEL_TOKEN` privados. Não configure os dois modos simultaneamente. Este modo por nome depende de a sessão Wrangler continuar autenticada e não substitui credenciais de serviço para funcionamento permanente. O Worker `faysk-stt` usa o `wrangler.stt.jsonc` e disponibiliza `https://stt.faysk.dev`.
 
 ## Executar
 
