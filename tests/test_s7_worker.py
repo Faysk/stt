@@ -58,10 +58,10 @@ def test_s7_only_claims_small_audio_uploads(tmp_path,monkeypatch):
                 d.execute("""INSERT INTO jobs(id,owner,title,source,status,created,expires,
                            input_bytes,priority) VALUES(?,?,?,?,?,?,?,?,?)""",
                           (jid,"owner",title,source,"queued",now,now+7200,size,priority))
-        assert c.post("/api/worker/claim",headers=S7,json={"id":"s7-edge","info":CAPS}).json()["job"] is None
         desired=dict(worker="s7-edge",model="tiny",device="cpu",compute="float32",paused=False)
         assert c.put("/api/admin/settings",headers=ADMIN,json=desired).status_code==409
-        c.post("/api/worker/claim",headers=S7,json={"id":"s7-edge","info":CAPS})
+        # Register first: until an online compatible worker is seen, admin opt-in fails.
+        assert c.post("/api/worker/claim",headers=S7,json={"id":"s7-edge","info":CAPS}).json()["job"] is None
         assert c.put("/api/admin/settings",headers=ADMIN,json=desired).status_code==200
         claimed=c.post("/api/worker/claim",headers=S7,json={"id":"s7-edge","info":CAPS})
         assert claimed.status_code==200
