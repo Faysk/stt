@@ -35,3 +35,22 @@ def test_release_reuses_verified_node_dependencies_without_mutating_them():
     assert "Invoke-Native 'node' @('scripts/verify-node-deps.mjs')" in source
     assert "Invoke-Native 'npm' @('ci')" not in source
     assert source.index("verify-node-deps.mjs") < source.index("Running local Python and Node regressions")
+
+
+def test_operator_release_preserves_persistent_cloudflare_tunnel():
+    publish = RELEASE.read_text(encoding="utf-8")
+    stop = (ROOT / "scripts" / "stop.ps1").read_text(encoding="utf-8")
+    start = (ROOT / "scripts" / "start.ps1").read_text(encoding="utf-8")
+    assert "& (Join-Path $root 'scripts\\stop.ps1') -PreserveTunnel" in publish
+    assert "& (Join-Path $root 'scripts\\start.ps1') -SkipTunnel" in publish
+    assert "param([switch]$PreserveTunnel)" in stop
+    assert "if (-not $PreserveTunnel -and (Test-Path -LiteralPath $tunnelFile))" in stop
+    assert "param([switch]$SkipTunnel)" in start
+    assert "if (-not $SkipTunnel -and $envText -match" in start
+    # Never mutate tunnel while the production publish script is in-flight.
+    assert "server.tunnel" not in publish
+    assert "cloudflared" not in publish
+    # Reached only after public HTTPS origin gate; avoids silently starting
+    # application with a missing/misconfigured persistent connector.
+    assert publish.index("Test-SttHttp 'before-restart'") < publish.index(
+        "& (Join-Path $root 'scripts\\stop.ps1') -PreserveTunnel")
