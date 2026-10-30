@@ -287,8 +287,10 @@
     }
   };
   const originalLoadJobs = loadJobs;
+  let pendingHistoryLoads = 0;
   loadJobs = async function(...args) {
     const section = $('history');
+    pendingHistoryLoads++;
     section.classList.add('is-fetching');
     if (!$('runs').children.length) {
       for (let n = 0; n < 5; n++) {
@@ -301,7 +303,10 @@
       }
     }
     try { return await originalLoadJobs(...args); }
-    finally { section.classList.remove('is-fetching'); }
+    finally {
+      pendingHistoryLoads--;
+      if (!pendingHistoryLoads) section.classList.remove('is-fetching');
+    }
   };
   const originalLoadPeriod = loadPeriod;
   loadPeriod = async function(...args) {
