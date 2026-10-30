@@ -131,6 +131,8 @@ def maintenance():
                 continue
     with db() as c:
         c.execute('BEGIN IMMEDIATE')
+        c.execute("UPDATE model_preloads SET status='pending',updated=?,error='REQUEUED_AFTER_TIMEOUT' WHERE status='running' AND updated<?",(now,now-600))
+        c.execute("DELETE FROM model_preloads WHERE status IN ('ready','failed') AND updated<?",(now-7*TTL,))
         c.execute("""UPDATE jobs SET status='expired',stage='expired',owner='',
                   title=NULL,source=NULL,error=NULL,lease=NULL,language=NULL
                   WHERE expires<=? AND status!='expired'""", (now,))
@@ -1214,7 +1216,7 @@ def claim_model_preload(value: ModelPreloadClaim):
 def report_model_preload(pid: str,value: ModelPreloadReport):
     if len(pid)!=32 or any(ch not in '0123456789abcdef' for ch in pid):
         raise HTTPException(404,'Operação não encontrada.')
-    if value.status not in ('ready','failed'):
+    if value.status not in ('running','ready','failed'):
         raise HTTPException(400,'Estado inválido.')
     with db() as c:
         c.execute('BEGIN IMMEDIATE')
