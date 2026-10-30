@@ -114,3 +114,23 @@ Ver [inventário da migração](../migrations/tts-to-stt/INVENTORY.md), com refe
 Nenhuma alteração no site em produção, Cloudflare, DNS, pesos, transcrições, dados do SQLite, secrets, GitHub repository slug ou projeto TDA. Este documento é rastreio técnico e não execução de cutover.
 
 **Índice:** [#9 auditoria inicial](https://github.com/Faysk/tts/issues/9) · [#11 migração](https://github.com/Faysk/tts/issues/11) · [#20 outbox](https://github.com/Faysk/tts/issues/20) · [#21 atomicidade](https://github.com/Faysk/tts/issues/21) · [#22 mídia](https://github.com/Faysk/tts/issues/22) · [#23 privacidade](https://github.com/Faysk/tts/issues/23) · [#24 CI](https://github.com/Faysk/tts/issues/24)
+
+
+## 9. Atualização de implementação após a auditoria (30/10/2026)
+
+A auditoria original era um *baseline* pré-correção. **Após este relatório**, o trabalho avançou por PRs **ainda em draft e não publicados**:
+
+| PR | Implementações em branch | Evidência |
+|---|---|---|
+| [#26](https://github.com/Faysk/tts/pull/26) | Dead-letter da outbox (#20), gerações de resultado e rollback SQL (#21), budgets de decode/download (#22), retenção de eventos (#23), workflow de segurança (#24) | CI verde nas branches |
+| [#27](https://github.com/Faysk/tts/pull/27) | Aliases STT_/TTS_ com erro em conflito, manutenção da base antiga, sessão/idioma no mesmo origin, testes de upgrade | CI verde |
+| [#29](https://github.com/Faysk/tts/pull/29) | Branding STT e SEO, Worker STT isolado em `wrangler.stt.jsonc`, antigo provisionador com plano sem escrita por padrão, guardião de `npm run deploy`, dry-run de Wrangler, helper de rollback offline e testes | **49 pytest passaram**, testes JS, parser PowerShell, build dry-run Cloudflare e Security audit verdes em 30/10/2026 |
+| [#25](https://github.com/Faysk/tts/pull/25) | Inventário, plano de cutover e rollback, este relatório | Documentação, CI verde |
+
+A ferramenta de rollback agora existe como `scripts/restore_legacy_exports.py` (PR #29), com comportamento *read-only* por padrão e opção explícita de escrita **somente offline e após backup**; isso **não significa** que o rollback real foi ensaiado em NTFS/produção.
+
+O novo Worker é independente, `faysk-stt`, usando temporariamente a origem antiga apenas como proposta sujeita a teste real. O provisionador original `scripts/cloudflare.py` passou a bloquear mutações por padrão. `npm run deploy` exige alvo STT digitado explicitamente. **Nenhum deploy foi realizado.**
+
+A issue **[#28 — ações humanas e bloqueios externos](https://github.com/Faysk/tts/issues/28)** reúne passo a passo completo para Cloudflare real, Windows/backup, GPUs/modelos Qwen, duas origens do navegador, release/rename, evidências e política de não divulgar segredos. A execução dessas tarefas é a diferença entre **código preparado** e **produção validada**.
+
+**Estado de decisão permanece NO-GO até #19 e #28 aprovadas.** Testes sintéticos/CI verdes não substituem hardware, tráfego ou rollback real.
