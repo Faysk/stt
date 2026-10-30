@@ -138,12 +138,12 @@ try {
     Invoke-Native 'npm' @('run','deploy:stt:dry-run')
 
     Test-SttHttp 'before-restart'
-    Write-Host 'Stopping only the processes recorded by this project...'
-    & (Join-Path $root 'scripts\stop.ps1')
+    Write-Host 'Stopping application API/worker only; preserving the existing Cloudflare Tunnel...'
+    & (Join-Path $root 'scripts\stop.ps1') -PreserveTunnel
     Write-Host 'Waiting for the old API listener to release port 8765...'
     Wait-SttPortReleased -Port 8765 -TimeoutSeconds 45
-    Write-Host 'Starting API, worker and configured Tunnel from this checkout...'
-    & (Join-Path $root 'scripts\start.ps1')
+    Write-Host 'Starting API and worker from this checkout; the existing Tunnel remains untouched...'
+    & (Join-Path $root 'scripts\start.ps1') -SkipTunnel
     Test-SttHttp 'after-restart' 6
 
     Write-Host 'Publishing only the approved Cloudflare Worker faysk-stt...'
