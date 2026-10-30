@@ -255,7 +255,9 @@ def preflight(request: Request):
         inflight = c.execute('SELECT count(*) FROM upload_slots').fetchone()[0]
         if active + inflight >= 20:
             raise HTTPException(429,'Fila cheia. Tente novamente mais tarde.')
-        if c.execute('SELECT count(*) FROM jobs WHERE owner=? AND created>?',(own,now-3600)).fetchone()[0] >= 10:
+        previous_jobs = c.execute('SELECT count(*) FROM jobs WHERE owner=? AND created>?',(own,now-3600)).fetchone()[0]
+        reserved = c.execute('SELECT count(*) FROM upload_slots WHERE owner=? AND created>?',(own,now-3600)).fetchone()[0]
+        if previous_jobs + reserved >= 10:
             raise HTTPException(429,'Limite de 10 envios por hora nesta sessão.')
         if is_upload and inflight >= 4:
             raise HTTPException(429,'Muitos uploads simultâneos. Tente novamente.')
