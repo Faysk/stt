@@ -110,7 +110,7 @@ def run(config):
         finish_stage('media_probe_s')
         from faster_whisper import WhisperModel
         progress('loading')
-        model_root=getenv('TTS_MODELS',str(Path(__file__).resolve().parents[1]/'models'))
+        model_root=getenv('STT_MODELS',str(Path(__file__).resolve().parents[1]/'models'))
         model=WhisperModel(job['model'],device=job['device'],compute_type=job['compute'],cpu_threads=8,download_root=model_root)
         finish_stage('model_load_s')
         revisions={m['id']:m['revision'] for m in installed_models(model_root)}
