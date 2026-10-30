@@ -218,3 +218,63 @@ def test_expired_download_never_spawns_inference(lab,monkeypatch):
     monkeypatch.setattr(w.subprocess,'Popen',lambda *a,**kw:created.append(a))
     w.execute({'id':'expired','lease':'lease','source':'upload','expires':1001.0})
     assert not created
+
+
+def test_same_session_slots_count_before_body(lab):
+    c,m=lab
+    # Nine accepted jobs and one in-flight upload fill this session's quota.
+    for _ in range(9): submit(c)
+    owner=m.hashlib.sha256(SESSION['x-session-key'].encode()).hexdigest()
+    with m.db() as d:
+        d.execute('INSERT INTO upload_slots VALUES (?,?,?)',('reserved',owner,time.time()))
+    result=c.post('/api/jobs/upload',headers=SESSION,
+                  files={'file':('denied.wav',b'x'*4096,'audio/wav')})
+    assert result.status_code==429
+
+def test_untimed_result_does_not_export_fake_srt(lab):
+    c,m=lab
+    jid=submit(c)
+    lease=claim(c)['lease']
+    result=c.post(f'/api/worker/{jid}/result',headers=WORKER,
+                  json={'lease':lease,'duration':3,'timing':'none',
+                        'result_state':'complete','text':'Texto sem alinhamento.'})
+    assert result.status_code==200,result.text
+    public=c.get('/api/jobs',headers=SESSION).json()[0]
+    assert public['timing']=='none'
+    assert c.get(f'/api/jobs/{jid}/download/srt',headers=SESSION).status_code==404
+    assert c.get(f'/api/jobs/{jid}/download/txt',headers=SESSION).text=='Texto sem alinhamento.'
+    structured=c.get(f'/api/jobs/{jid}/download/json',headers=SESSION).json()
+    assert structured['timing']=='none' and structured['segments']==[]
+    assert structured['text']=='Texto sem alinhamento.'
+
+def test_metrics_persist_separately_from_queue_time(lab):
+    c,m=lab
+    jid=submit(c)
+    lease=claim(c)['lease']
+    stages={'schema_version':1,'engine_elapsed_s':4,'new_audio_seconds':3,
+            'reused_audio_seconds':0,'cache_source':'none','asr_s':3.5}
+    payload={'lease':lease,'duration':3,'elapsed':4,'metrics':stages}
+    ok=c.post(f'/api/worker/{jid}/result',headers=WORKER,json=payload)
+    assert ok.status_code==200,ok.text
+    detail=c.get(f'/api/admin/jobs/{jid}',headers={'x-admin-key':'test-admin'}).json()['job']
+    assert detail['metrics']['asr_s']==3.5 and detail['queue_seconds'] is not None
+    assert detail['job_total_seconds']>=detail['queue_seconds']
+    jid2=submit(c)
+    lease2=claim(c)['lease']
+    bad=dict(payload,lease=lease2,metrics=dict(stages,engine_elapsed_s=7))
+    assert c.post(f'/api/worker/{jid2}/result',headers=WORKER,json=bad).status_code==422
+
+def test_qwen_configuration_requires_worker_capability(lab):
+    c,m=lab
+    jid=submit(c)
+    requested={'worker':'notebook','model':'qwen-fast','device':'cuda',
+               'compute':'bfloat16','engine':'qwen3','language_hint':'auto',
+               'paused':False}
+    res=c.put('/api/admin/settings',headers={'x-admin-key':'test-admin'},json=requested)
+    assert res.status_code==200,res.text
+    not_ready=c.post('/api/worker/claim',headers=WORKER,json={'id':'notebook','info':{'qwen_models':[]}})
+    assert not_ready.status_code==200 and not_ready.json()['job'] is None
+    ready=c.post('/api/worker/claim',headers=WORKER,json={'id':'notebook',
+                  'info':{'qwen_models':['qwen-fast']}})
+    job=ready.json()['job']
+    assert job['id']==jid and job['engine']=='qwen3' and job['language_hint']=='auto'
