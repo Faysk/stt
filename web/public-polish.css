@@ -465,10 +465,15 @@
       gap: 12px;
     }
     .public-page .language-picker select::picker-icon {
+      content: "";
+      flex: 0 0 7px;
+      inline-size: 7px;
+      block-size: 7px;
       margin-inline-start: auto;
-      color: #93aed0;
-      font-size: 13px;
-      transition: rotate 160ms ease, color 160ms ease;
+      border-right: 1.6px solid #93aed0;
+      border-bottom: 1.6px solid #93aed0;
+      transform: translateY(-2px) rotate(45deg);
+      transition: transform 160ms ease, border-color 160ms ease;
     }
     .public-page .language-picker select:open {
       border-color: #6aa7ea;
@@ -476,8 +481,8 @@
       box-shadow: 0 0 0 2px #62adff1a;
     }
     .public-page .language-picker select:open::picker-icon {
-      rotate: 180deg;
-      color: #9fceff;
+      transform: translateY(2px) rotate(225deg);
+      border-color: #9fceff;
     }
     .public-page .language-picker select::picker(select) {
       min-inline-size: 204px;
