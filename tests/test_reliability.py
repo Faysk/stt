@@ -43,9 +43,17 @@ def claim(c):
 
 def test_admission_precedes_multipart_spooling(lab,monkeypatch):
     c,m=lab
-    key=m.hashlib.sha256(b'localtestclient').hexdigest()
+    # Ask the actual HTTP preflight to register the client key. Hardcoding
+    # localtestclient assumes a particular default edge secret and ASGI host;
+    # both vary on operator Windows machines and cause a false 201 vs 429.
+    seed=c.post('/api/jobs/youtube',headers=SESSION,
+                json={'url':'https://www.youtube.com/watch?v=dQw4w9WgXcQ'})
+    assert seed.status_code==201,seed.text
     with m.db() as d:
-        d.executemany('INSERT INTO admission VALUES (?,?)',[(key,time.time())]*20)
+        keys=d.execute('SELECT client FROM admission').fetchall()
+        assert len(keys)==1
+        key=keys[0]['client']
+        d.executemany('INSERT INTO admission VALUES (?,?)',[(key,time.time())]*19)
     from starlette.datastructures import UploadFile
     written=[]
     original=UploadFile.write
@@ -190,6 +198,10 @@ def test_worker_interrupt_cleans_up_child(lab,monkeypatch):
         def terminate(self): self.stopped=True
         def kill(self): self.stopped=True
         def wait(self,timeout=None):return 0
+    # server.app configures tempfile.tempdir globally for multipart uploads.
+    # That folder may be stale after a prior test/application lifecycle. The
+    # worker must use a dedicated temp root regardless of this global value.
+    monkeypatch.setattr(w.tempfile,'tempdir',str(Path(m.DATA)/'missing-global-temp'))
     monkeypatch.setattr(w.subprocess,'Popen',Fake)
     with pytest.raises(KeyboardInterrupt):
         w.execute({'id':'interrupt','lease':'lease','source':'https://youtu.be/abcdefghijk','expires':time.time()+60})

@@ -13,3 +13,4 @@ node_modules/
 
 # Durable local worker result spool (never commit media/transcripts/lease tokens)
 worker-outbox/
+worker-tmp/

@@ -232,7 +232,16 @@ def execute(job):
     thread.start()
     try:
         check_budget()
-        with tempfile.TemporaryDirectory(prefix='tts-',dir=getenv('TTS_TMP')) as temp:
+        # Never inherit tempfile.tempdir: the API changes it for multipart
+        # spooling, and an earlier API/test lifecycle can leave it stale.
+        # Worker inference needs an independent, persistent parent directory.
+        temp_root = Path(getenv('TTS_TMP') or str(ROOT / 'worker-tmp'))
+        if temp_root.is_symlink():
+            raise OSError('Untrusted worker temporary directory')
+        temp_root.mkdir(parents=True, exist_ok=True, mode=0o700)
+        if not temp_root.is_dir():
+            raise OSError('Worker temporary path is not a directory')
+        with tempfile.TemporaryDirectory(prefix='tts-',dir=str(temp_root)) as temp:
             folder = Path(temp)
             progress_file=folder/'progress.json'
             config = folder/'job.json'
