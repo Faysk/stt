@@ -37,7 +37,7 @@ A interface se adapta ao idioma do navegador e oferece seleção manual em dez i
 
 Os arquivos e resultados ficam disponíveis por **24 horas** após o envio. O acesso às suas transcrições é associado a uma chave armazenada no navegador. Limpar os dados do site ou encerrar uma sessão anônima remove esse acesso.
 
-Após a expiração, o acesso é bloqueado imediatamente. A limpeza física é feita pela manutenção do servidor, com novas tentativas se ocorrerem erros de I/O ou bloqueios temporários; se o servidor estiver desligado, a purga só pode retomar quando ele voltar. Métricas operacionais e identificadores pseudônimos de sessão e rede podem ser mantidos para análise de uso e prevenção de abuso. Eles não dão acesso aos arquivos. Não armazenamos endereços IP brutos no histórico de trabalhos.
+Após a expiração, o acesso é bloqueado imediatamente. A limpeza física é feita pela manutenção do servidor, com novas tentativas se ocorrerem erros de I/O ou bloqueios temporários; se o servidor estiver desligado, a purga só pode retomar quando ele voltar. Métricas operacionais e identificadores pseudônimos de sessão e rede são conservados por até **30 dias** para diagnóstico e prevenção de abuso. Após esse prazo, eventos granulares e identificadores de sessão/rede são removidos. Contagens e estatísticas operacionais agregadas podem permanecer por até **5 anos** para acompanhar a evolução do serviço, sem fornecer acesso às transcrições. Não armazenamos endereços IP brutos no histórico de trabalhos.
 
 ## Limites e qualidade
 

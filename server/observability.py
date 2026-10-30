@@ -40,6 +40,7 @@ def install(c):
       CREATE TABLE IF NOT EXISTS events (id INTEGER PRIMARY KEY AUTOINCREMENT,at REAL,job TEXT,kind TEXT,actor TEXT,data TEXT);
       CREATE TABLE IF NOT EXISTS observability_meta (key TEXT PRIMARY KEY,value REAL);
       CREATE INDEX IF NOT EXISTS events_job ON events(job,at);
+      CREATE INDEX IF NOT EXISTS events_at ON events(at);
       CREATE INDEX IF NOT EXISTS jobs_created ON jobs(created);
     ''')
 

@@ -12,6 +12,33 @@ from server.observability import package_versions
 from server.catalog import installed_models
 from server.metrics import make_metrics
 
+MAX_MEDIA_BYTES = 90 * 1024**2
+MAX_AUDIO_SECONDS = 7200
+
+
+def bounded_audio_duration(container, maximum=MAX_AUDIO_SECONDS):
+    """Count decoded audio, not merely untrusted container duration metadata.
+
+    Runs before model allocation/inference. Streams frames without retaining
+    PCM. It intentionally costs a separate decode pass to cap ASR work.
+    """
+    stream = next((item for item in container.streams if item.type == 'audio'), None)
+    if stream is None:
+        raise ValueError('Arquivo sem faixa de áudio.')
+    seconds = 0.0
+    for frame in container.decode(stream):
+        rate = getattr(frame, 'sample_rate', None) or getattr(stream.codec_context, 'sample_rate', 0)
+        count = getattr(frame, 'samples', 0)
+        if not rate or count <= 0:
+            raise ValueError('Amostras de áudio inválidas.')
+        seconds += count / rate
+        if seconds > maximum:
+            raise ValueError('Duração máxima: 2 horas.')
+    if seconds <= 0:
+        raise ValueError('Áudio vazio.')
+    return seconds
+
+
 DLL_HANDLES=[]
 if os.name=='nt':
     import site
@@ -63,18 +90,22 @@ def run(config):
             def limit(d):
                 if d.get('downloaded_bytes',0)>90*1024**2:
                     raise ValueError('Download excede 90 MB.')
-            with yt_dlp.YoutubeDL({'js_runtimes':{'node':{}},'format':'bestaudio/best','noplaylist':True,'outtmpl':str(media),'max_filesize':90*1024**2,'socket_timeout':30,'retries':2,'quiet':True,'progress_hooks':[limit],'match_filter':lambda info,**kw: 'Duração máxima: 2 horas.' if (info.get('duration') or 0)>7200 or info.get('is_live') else None}) as ydl:
+            with yt_dlp.YoutubeDL({'js_runtimes':{'node':{}},'format':'bestaudio/best','noplaylist':True,'outtmpl':str(media),'max_filesize':MAX_MEDIA_BYTES,'socket_timeout':30,'retries':2,'quiet':True,'progress_hooks':[limit],'match_filter':lambda info,**kw: 'Duração máxima: 2 horas.' if (info.get('duration') or 0)>7200 or info.get('is_live') else None}) as ydl:
                 media_info=ydl.extract_info(job['source'],download=True)
                 if media_info: media_title=(media_info.get('title') or 'YouTube')[:180]
         if job['source']!='upload':
             finish_stage('download_s')
         else:
             stage_started=time.perf_counter()  # Transport happened in the worker.
-        # PyAV decodes independently of the uploaded filename, with a duration cap.
+        # Never allocate a model for oversized or overlong media. A complete
+        # lightweight decode checks actual PCM duration when metadata lies.
+        if not media.is_file() or media.stat().st_size > MAX_MEDIA_BYTES:
+            raise ValueError('Mídia excede o limite de 90 MB.')
         import av
         with av.open(str(media)) as container:
             duration=(container.duration or 0)/av.time_base
-            if duration>7200: raise ValueError('Duração máxima: 2 horas.')
+            if duration>MAX_AUDIO_SECONDS: raise ValueError('Duração máxima: 2 horas.')
+            bounded_audio_duration(container)
         finish_stage('media_probe_s')
         from faster_whisper import WhisperModel
         progress('loading')
