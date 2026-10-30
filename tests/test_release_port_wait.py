@@ -25,9 +25,13 @@ def test_wait_is_bounded_and_fail_closed_for_active_listener():
     assert "Get-NetTCPConnection -LocalPort $Port -State Listen" in block
     assert "Where-Object { $null -ne $_ }" in block
     assert "if ($listeners.Count -eq 0)" in block
-    assert "if ($timer.Elapsed.TotalSeconds -ge $TimeoutSeconds)" in block
-    assert "throw \"STT_PORT_NOT_RELEASED:" in block
+    assert "if ($free.Elapsed.TotalMilliseconds -ge $StableMilliseconds)" in block
+    assert "$free = $null" in block
+    assert "if ($null -ne $free -and -not $reappeared)" in block
+    assert "STT_PORT_NOT_RELEASED:" in block
     assert "Start-Sleep -Milliseconds 400" in block
+    assert "[int]$StableMilliseconds = 3000" in block
+    assert "Select-Object -ExpandProperty OwningProcess -Unique" in block
 
 
 def test_release_reuses_verified_node_dependencies_without_mutating_them():
@@ -54,3 +58,14 @@ def test_operator_release_preserves_persistent_cloudflare_tunnel():
     # application with a missing/misconfigured persistent connector.
     assert publish.index("Test-SttHttp 'before-restart'") < publish.index(
         "& (Join-Path $root 'scripts\\stop.ps1') -PreserveTunnel")
+
+
+def test_start_refuses_duplicate_api_and_exposes_listener_owner_safely():
+    source = (ROOT / "scripts" / "start.ps1").read_text(encoding="utf-8")
+    assert "Get-NetTCPConnection -LocalPort 8765 -State Listen" in source
+    assert "Select-Object -ExpandProperty OwningProcess -Unique" in source
+    assert "STT_API_PORT_OCCUPIED:" in source
+    assert "Não iniciarei API duplicada" in source
+    assert "$owner.Name" in source
+    # The error must not emit complete CommandLine, which can contain secrets.
+    assert "$owner.CommandLine" not in source

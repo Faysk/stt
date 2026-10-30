@@ -30,9 +30,13 @@ pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\publish-stt.ps1 -Apply -
 1. Confere repositório Faysk/stt, branch main, checkout limpo, .venv e .env.
 2. Atualiza main com pull fast-forward, verifica **somente leitura** que as dependências já instaladas correspondem ao `package-lock.json` (incluindo versões/integridade dos pacotes; permite opcionais incompatíveis com a plataforma), executa testes Python/Node e dry-run Wrangler. **Não executa `npm ci` durante a publicação.**
 3. Confirma os endpoints HTTP atuais 200 (site), 200 (API) e 403 (origem sem segredo).
-4. Encerra somente **API e worker** STT identificados pelos arquivos PID, **preservando o Tunnel e seus processos filhos**. Espera até 45 segundos a libertação da porta 8765 e só então reinicia API/worker; se continuar ocupada, interrompe a publicação sem matar processos desconhecidos. O Tunnel só é iniciado separadamente quando estiver parado, fora do publicador.
+4. Encerra somente **API e worker** STT identificados pelos arquivos PID, **preservando o Tunnel e seus processos filhos**. Espera até 45 segundos por **3 segundos contínuos com a porta 8765 livre** e só então tenta reiniciar API/worker; se voltar a ficar ocupada, informa o(s) PID(s) e interrompe sem matar processos desconhecidos. O Tunnel só é iniciado separadamente quando estiver parado, fora do publicador.
 5. Repete o health gate antes de fazer npm run deploy com aprovação explícita apenas para Worker faysk-stt e domínio stt.faysk.dev.
 6. Confirma novamente HTTP 200/200/403 e que o asset /admin-enhancements.js retorna 200, mostrando o SHA do checkout implantado.
+
+## Diagnóstico de porta 8765 que reaparece
+
+Se `start.ps1` mostrar `STT_API_PORT_OCCUPIED` após `stop.ps1 -PreserveTunnel`, **não repita `-Apply`**. O publicador pode ter visto a porta livre momentaneamente antes de um relançamento externo. Use `Get-NetTCPConnection -LocalPort 8765 -State Listen` para obter `OwningProcess` e `Get-CimInstance Win32_Process -Filter 'ProcessId=<PID>'` para identificar o pai, o executável e o horário de início. Compare com `logs/pids.json` e verifique separadamente `server.worker`. Não imprima linhas de comando nem segredos de processos em relatórios públicos. Se a API estiver ativa mas o worker não, investigue a origem do supervisor antes de iniciar qualquer coisa; não crie um segundo Uvicorn e não encerre outros serviços por PID genérico. Rastrear em [STT #78](https://github.com/Faysk/stt/issues/78).
 
 ## Limites e incidentes
 

@@ -8,7 +8,19 @@ $runtime = Join-Path $projectPath '.venv\Scripts\python.exe'
 $logs = Join-Path $projectPath 'logs'
 New-Item -ItemType Directory -Force -Path $logs | Out-Null
 if (-not (Test-Path -LiteralPath (Join-Path $projectPath '.env'))) { throw 'Crie o .env antes de iniciar.' }
-if (Get-NetTCPConnection -LocalPort 8765 -State Listen -ErrorAction SilentlyContinue) { throw 'Porta 8765 já está em uso; não iniciarei processos duplicados.' }
+$listeners = @(
+    Get-NetTCPConnection -LocalPort 8765 -State Listen -ErrorAction SilentlyContinue |
+        Where-Object { $null -ne $_ }
+)
+if ($listeners.Count -gt 0) {
+    # Capture the owner only. CommandLine can contain secrets; never print it.
+    $owners = @($listeners | Select-Object -ExpandProperty OwningProcess -Unique | ForEach-Object {
+        $ownerPid = [int]$_
+        $owner = Get-CimInstance Win32_Process -Filter "ProcessId=$ownerPid" -ErrorAction SilentlyContinue
+        "{0} ({1})" -f $ownerPid, $(if ($owner) { $owner.Name } else { 'unknown' })
+    })
+    throw ("STT_API_PORT_OCCUPIED: porta 8765 já tem listener PID(s): {0}. Não iniciarei API duplicada. Diagnostique o dono antes de encerrar qualquer processo." -f ($owners -join ', '))
+}
 $api = Start-Process -FilePath $runtime -ArgumentList '-m','uvicorn','server.app:app','--host','127.0.0.1','--port','8765','--no-access-log' -WorkingDirectory $projectPath -WindowStyle Hidden -RedirectStandardOutput (Join-Path $logs 'api.log') -RedirectStandardError (Join-Path $logs 'api-error.log') -PassThru
 $agent = Start-Process -FilePath $runtime -ArgumentList '-m','server.worker' -WorkingDirectory $projectPath -WindowStyle Hidden -RedirectStandardOutput (Join-Path $logs 'worker.log') -RedirectStandardError (Join-Path $logs 'worker-error.log') -PassThru
 @{api=$api.Id;worker=$agent.Id} | ConvertTo-Json | Set-Content (Join-Path $logs 'pids.json')
