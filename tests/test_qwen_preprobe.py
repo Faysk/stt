@@ -55,7 +55,7 @@ def test_qwen_probe_rejects_empty_corrupt_and_missing_audio():
     with pytest.raises(qwen.EngineError,match='QWEN_AUDIO_FRAME_INVALID'):
         qwen.probe_audio_duration('fake',fake_av([Frame(0)]))
     with pytest.raises(qwen.EngineError,match='QWEN_AUDIO_FRAME_INVALID'):
-        qwen.probe_audio_duration('fake',fake_av([Frame(100,0)]))
+        qwen.probe_audio_duration('fake',fake_av([Frame(-1,0)]))
 
 
 def test_bad_media_does_not_touch_torch_or_gpu_before_preprobe(tmp_path,monkeypatch):
