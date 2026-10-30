@@ -20,6 +20,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, model_validator
 from server.catalog import MODEL_CATALOG, installed_models
 from server import observability as obs
+from server.metrics import validate as validate_metrics
 
 load_dotenv()
 ROOT = Path(__file__).resolve().parents[1]
@@ -70,7 +71,7 @@ def init():
             'priority':'INTEGER DEFAULT 0','outcome':'TEXT','runtime':'TEXT',
             'model_revision':'TEXT','stage':"TEXT DEFAULT 'queued'",
             'purged_at':'REAL','purge_retry_at':'REAL DEFAULT 0','purge_attempts':'INTEGER DEFAULT 0',
-            'purge_error':'TEXT','receipt_hash':'TEXT','receipt_lease':'TEXT','result_state':'TEXT'}.items():
+            'purge_error':'TEXT','receipt_hash':'TEXT','receipt_lease':'TEXT','result_state':'TEXT','metrics_json':'TEXT'}.items():
             if name not in columns: c.execute(f'ALTER TABLE jobs ADD COLUMN {name} {definition}')
         c.execute("UPDATE jobs SET outcome=status WHERE outcome IS NULL AND status IN ('done','failed','cancelled')")
         c.execute("UPDATE jobs SET stage=status WHERE stage='queued' AND status IN ('done','failed','expired','cancelled')")
@@ -400,7 +401,9 @@ def download(jid: str, fmt: str, own=Depends(owner)):
     r = owned(jid,own)
     if fmt not in ('txt','md','srt','json') or r['status'] != 'done':
         raise HTTPException(404, 'Resultado indisponível.')
-    return FileResponse(BLOB / jid / ('transcript.'+fmt), filename='transcricao.'+fmt, media_type='application/json' if fmt=='json' else 'text/plain; charset=utf-8')
+    path = BLOB / jid / ('transcript.'+fmt)
+    if not path.is_file(): raise HTTPException(404, 'Formato indisponível para este motor.')
+    return FileResponse(path, filename='transcricao.'+fmt, media_type='application/json' if fmt=='json' else 'text/plain; charset=utf-8')
 
 @app.get('/api/jobs/{jid}')
 def job(jid: str, own=Depends(owner)):
@@ -429,9 +432,11 @@ def dashboard():
           models=MODELS,catalog=installed_models(os.getenv('TTS_MODELS',str(ROOT/'models'))))
 
 def admin_job(r):
-    return {k:r[k] for k in ('id','title','status','outcome','created','started','finished','expires','heartbeat',
+    data = {k:r[k] for k in ('id','title','status','outcome','created','started','finished','expires','heartbeat',
         'client_tag','network_tag','ui_language','priority','stage','attempts','worker','model','device','compute',
         'duration','elapsed','cpu_seconds','peak_rss_mb','peak_vram_mb','input_bytes','language','error','model_revision','runtime','progress','result_state','purged_at','purge_attempts','purge_retry_at','purge_error')}
+    data['metrics'] = json.loads(r['metrics_json']) if r['metrics_json'] else None
+    return data
 
 @app.get('/api/admin/history',dependencies=[Depends(admin)])
 def history(period: str='day'):
@@ -579,7 +584,153 @@ class Result(BaseModel):
     runtime: dict = Field(default_factory=dict)
     model_revision: str | None = Field(default=None,max_length=80)
     title: str | None = Field(default=None,max_length=180)
-    result_state: str = Field(default='unknown',pattern='^(unknown|complete|silence|partial)$')
+    result_state: str = Field(default='unknown',pattern='^(unknown|complete|silence|partial)
+
+    @model_validator(mode='after')
+    def chronology(self):
+        if self.metrics is not None:
+            validate_metrics(self.metrics)
+        if self.timing == 'none' and self.segments:
+            raise ValueError('Untimed text cannot contain timed segments.')
+        if self.error and self.segments:
+            raise ValueError('Erro não pode conter segmentos publicados.')
+        previous = -1.0
+        for segment in self.segments:
+            if segment.end < segment.start:
+                raise ValueError('Segmento com intervalo invertido.')
+            if segment.start + 1e-6 < previous:
+                raise ValueError('Segmentos fora da ordem cronológica.')
+            if self.duration == 0 or segment.end > self.duration + 0.5:
+                raise ValueError('Segmento além da duração declarada.')
+            previous = segment.start  # legitimate overlapping speech is preserved
+        if self.result_state == 'silence' and self.segments:
+            raise ValueError('Silêncio não pode conter segmentos.')
+        if self.result_state in ('complete','partial') and not self.segments and not (self.text or '').strip() and not self.error:
+            raise ValueError('Resultado vazio exige estado silêncio ou desconhecido.')
+        return self
+
+def timestamp(n):
+    ms = int(n*1000)
+    return f'{ms//3600000:02}:{ms//60000%60:02}:{ms//1000%60:02},{ms%1000:03}'
+
+@app.post('/api/worker/{jid}/result', dependencies=[Depends(worker)])
+def result(jid: str, result: Result):
+    canonical = json.dumps(result.model_dump(),sort_keys=True,ensure_ascii=False,separators=(',',':'),allow_nan=False)
+    receipt = hashlib.sha256(canonical.encode('utf-8')).hexdigest()
+    lease_hash = hashlib.sha256(result.lease.encode()).hexdigest()
+    with db() as c:
+        c.execute('BEGIN IMMEDIATE')
+        previous = c.execute('SELECT status,expires,receipt_hash,receipt_lease FROM jobs WHERE id=?',(jid,)).fetchone()
+        if previous and previous['expires']>time.time() and previous['status'] in ('done','failed'):
+            if previous['receipt_hash']==receipt and previous['receipt_lease']==lease_hash:
+                return {'ok':True,'receipt':receipt,'duplicate':True}
+            raise HTTPException(409,'Tentativa concluída com resultado diferente.')
+        r = leased(c,jid,result.lease)
+        if not result.error:
+            folder = BLOB / jid
+            folder.mkdir(exist_ok=True)
+            text = result.text.strip() if result.text is not None else '\n'.join(s.text.strip() for s in result.segments)
+            exports = {
+                'txt': text,
+                'md': '# Transcrição\n\n' + text,
+                **({'srt': '\n\n'.join(f'{i}\n{timestamp(s.start)} --> {timestamp(s.end)}\n{s.text.strip()}' for i,s in enumerate(result.segments,1))} if result.timing=='segments' else {}),
+                'json': json.dumps(dict(schema_version=1,result_state=result.result_state,timing=result.timing,language=result.language,duration=result.duration,
+                                        model=r['model'],text=text if result.timing=='none' else None,segments=[s.model_dump() for s in result.segments]),ensure_ascii=False)
+            }
+            for fmt, content in exports.items():
+                tmp = folder / ('transcript.' + fmt + '.tmp')
+                tmp.write_text(content,encoding='utf-8')
+                tmp.replace(folder / ('transcript.' + fmt))
+        state = 'failed' if result.error else 'done'
+        outcome = 'failed' if result.error else ('partial' if result.result_state=='partial' else 'done')
+        c.execute("""UPDATE jobs SET status=?,finished=?,duration=?,elapsed=?,cpu_seconds=?,peak_rss_mb=?,
+                   peak_vram_mb=?,language=?,error=?,progress=?,lease=NULL,input_bytes=max(input_bytes,?),
+                   receipt_hash=?,receipt_lease=?,result_state=? WHERE id=? AND lease=? AND status='running'""",
+                  (state,time.time(),result.duration,result.elapsed,result.cpu_seconds,result.peak_rss_mb,
+                   result.peak_vram_mb,result.language,result.error,0 if result.error else 100,result.input_bytes,
+                   receipt,lease_hash,result.result_state,jid,result.lease))
+        runtime=json.dumps(result.runtime)
+        if len(runtime)>8000: runtime=json.dumps({'metadata_error':'oversized_runtime'})
+        c.execute('UPDATE jobs SET outcome=?,stage=?,runtime=?,model_revision=?,metrics_json=? WHERE id=?',
+                  (outcome,state,runtime,result.model_revision,json.dumps(result.metrics) if result.metrics is not None else None,jid))
+        if result.title and r['source']!='upload': c.execute('UPDATE jobs SET title=? WHERE id=?',(result.title,jid))
+        obs.event(c,jid,outcome,r['worker'],{'elapsed':result.elapsed})
+    return {'ok':True,'receipt':receipt,'duplicate':False}
+
+app.mount('/', StaticFiles(directory=ROOT/'web',html=True),name='web')
+)
+    metrics: dict | None = None
+    text: str | None = Field(default=None,max_length=500000)
+    timing: str = Field(default='segments',pattern='^(segments|none)
+
+    @model_validator(mode='after')
+    def chronology(self):
+        if self.error and self.segments:
+            raise ValueError('Erro não pode conter segmentos publicados.')
+        previous = -1.0
+        for segment in self.segments:
+            if segment.end < segment.start:
+                raise ValueError('Segmento com intervalo invertido.')
+            if segment.start + 1e-6 < previous:
+                raise ValueError('Segmentos fora da ordem cronológica.')
+            if self.duration == 0 or segment.end > self.duration + 0.5:
+                raise ValueError('Segmento além da duração declarada.')
+            previous = segment.start  # legitimate overlapping speech is preserved
+        if self.result_state == 'silence' and self.segments:
+            raise ValueError('Silêncio não pode conter segmentos.')
+        if self.result_state in ('complete','partial') and not self.segments and not self.error:
+            raise ValueError('Resultado vazio exige estado silêncio ou desconhecido.')
+        return self
+
+def timestamp(n):
+    ms = int(n*1000)
+    return f'{ms//3600000:02}:{ms//60000%60:02}:{ms//1000%60:02},{ms%1000:03}'
+
+@app.post('/api/worker/{jid}/result', dependencies=[Depends(worker)])
+def result(jid: str, result: Result):
+    canonical = json.dumps(result.model_dump(),sort_keys=True,ensure_ascii=False,separators=(',',':'),allow_nan=False)
+    receipt = hashlib.sha256(canonical.encode('utf-8')).hexdigest()
+    lease_hash = hashlib.sha256(result.lease.encode()).hexdigest()
+    with db() as c:
+        c.execute('BEGIN IMMEDIATE')
+        previous = c.execute('SELECT status,expires,receipt_hash,receipt_lease FROM jobs WHERE id=?',(jid,)).fetchone()
+        if previous and previous['expires']>time.time() and previous['status'] in ('done','failed'):
+            if previous['receipt_hash']==receipt and previous['receipt_lease']==lease_hash:
+                return {'ok':True,'receipt':receipt,'duplicate':True}
+            raise HTTPException(409,'Tentativa concluída com resultado diferente.')
+        r = leased(c,jid,result.lease)
+        if not result.error:
+            folder = BLOB / jid
+            folder.mkdir(exist_ok=True)
+            text = '\n'.join(s.text.strip() for s in result.segments)
+            exports = {
+                'txt': text,
+                'md': '# Transcrição\n\n' + text,
+                'srt': '\n\n'.join(f'{i}\n{timestamp(s.start)} --> {timestamp(s.end)}\n{s.text.strip()}' for i,s in enumerate(result.segments,1)),
+                'json': json.dumps(dict(schema_version=1,result_state=result.result_state,language=result.language,duration=result.duration,
+                                        model=r['model'],segments=[s.model_dump() for s in result.segments]),ensure_ascii=False)
+            }
+            for fmt, content in exports.items():
+                tmp = folder / ('transcript.' + fmt + '.tmp')
+                tmp.write_text(content,encoding='utf-8')
+                tmp.replace(folder / ('transcript.' + fmt))
+        state = 'failed' if result.error else 'done'
+        outcome = 'failed' if result.error else ('partial' if result.result_state=='partial' else 'done')
+        c.execute("""UPDATE jobs SET status=?,finished=?,duration=?,elapsed=?,cpu_seconds=?,peak_rss_mb=?,
+                   peak_vram_mb=?,language=?,error=?,progress=?,lease=NULL,input_bytes=max(input_bytes,?),
+                   receipt_hash=?,receipt_lease=?,result_state=? WHERE id=? AND lease=? AND status='running'""",
+                  (state,time.time(),result.duration,result.elapsed,result.cpu_seconds,result.peak_rss_mb,
+                   result.peak_vram_mb,result.language,result.error,0 if result.error else 100,result.input_bytes,
+                   receipt,lease_hash,result.result_state,jid,result.lease))
+        runtime=json.dumps(result.runtime)
+        if len(runtime)>8000: runtime=json.dumps({'metadata_error':'oversized_runtime'})
+        c.execute('UPDATE jobs SET outcome=?,stage=?,runtime=?,model_revision=? WHERE id=?',(outcome,state,runtime,result.model_revision,jid))
+        if result.title and r['source']!='upload': c.execute('UPDATE jobs SET title=? WHERE id=?',(result.title,jid))
+        obs.event(c,jid,outcome,r['worker'],{'elapsed':result.elapsed})
+    return {'ok':True,'receipt':receipt,'duplicate':False}
+
+app.mount('/', StaticFiles(directory=ROOT/'web',html=True),name='web')
+)
 
     @model_validator(mode='after')
     def chronology(self):
