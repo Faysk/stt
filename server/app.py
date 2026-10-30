@@ -807,7 +807,14 @@ def report_model_preload(pid: str,value: ModelPreloadReport, request: Request):
 
 
 class Claim(BaseModel):
-    id: str = Field(pattern=r'^[a-zA-Z0-9_-]{1,80}, dependencies=[Depends(worker)])
+    id: str = Field(pattern=r'^[a-zA-Z0-9_-]{1,80}$')
+    info: dict = Field(default_factory=dict)
+
+def s7_eligible(item):
+    return (item['source']=='upload' and 0 < (item['input_bytes'] or 0) <= 8*1024**2
+            and Path(item['title'] or '').suffix.lower() in ('.wav','.mp3'))
+
+@app.post('/api/worker/claim', dependencies=[Depends(worker)])
 def claim(w: Claim, request: Request):
     require_s7_scope(request,w.id)
     now = time.time()
