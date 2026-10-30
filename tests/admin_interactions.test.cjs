@@ -39,6 +39,7 @@ nodes.login.onclick=()=>{};
 const document={activeElement:null,querySelector(){return null;}};
 const el=(tag,text='',cls='')=>new El(tag,text,cls);
 const calls=[];
+const clipboard=[];
 const data={
  settings:{worker:'notebook',model:'small',device:'cpu',compute:'int8',paused:false},
  workers:[{id:'notebook',seen:100,info:{system:'Windows',cpu:28,models:[{id:'small',revision:'a'.repeat(40)}],
@@ -65,7 +66,7 @@ const ctx=vm.createContext({
  },
  refresh:async()=>{},loadJobs:async()=>{},loadPeriod:async()=>{},
  precision(){}, api:async(path,opts)=>{calls.push({path,opts});return {id:'test',status:'pending'}},
- navigator:{clipboard:{writeText:async text=>calls.push({clipboard:text})}},
+ navigator:{clipboard:{writeText:async text=>clipboard.push(text)}},
  console,Set,Map,Promise,Number
 });
 vm.runInContext(fs.readFileSync('web/admin-enhancements.js','utf8'),ctx);
@@ -77,7 +78,7 @@ vm.runInContext(fs.readFileSync('web/admin-enhancements.js','utf8'),ctx);
   assert.match(sshCard.textContent,/nenhum executor STT online/);
   sshCard.querySelector('button').fire('click');
   await new Promise(resolve=>setImmediate(resolve));
-  assert.equal(calls.find(c=>c.clipboard)?.clipboard,'ssh -p 8022 u0_a279@192.168.1.2');
+  assert.equal(clipboard[0],'ssh -p 8022 u0_a279@192.168.1.2');
 
   assert.equal(nodes['precision-cards'].children.length,4);
   assert.ok(nodes['precision-cards'].children.some(card=>card.dataset.compute==='int16'),
