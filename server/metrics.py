@@ -24,6 +24,10 @@ def make_metrics(*,elapsed,stages=None,duration=None,reused_audio_seconds=0,cach
 def validate(data):
     if not isinstance(data,dict) or data.get('schema_version')!=SCHEMA_VERSION:
         raise ValueError('Unsupported metrics schema')
+    allowed = set(STAGES) | {'schema_version','engine_elapsed_s','new_audio_seconds',
+                              'reused_audio_seconds','cache_source'}
+    if set(data)-allowed or data.get('engine_elapsed_s') is None:
+        raise ValueError('Unknown/missing metric')
     for name in (*STAGES,'engine_elapsed_s','new_audio_seconds','reused_audio_seconds'):
         value = data.get(name)
         if value is not None and (isinstance(value,bool) or not isinstance(value,(int,float)) or
