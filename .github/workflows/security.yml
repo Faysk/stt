@@ -1,0 +1,41 @@
+name: Security audit
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+  schedule:
+    - cron: '18 5 * * 1'
+
+permissions:
+  contents: read
+
+jobs:
+  python-dependencies:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - name: Export locked production dependencies
+        run: uv export --locked --no-dev --no-hashes --no-emit-project --output-file requirements-security.txt
+      - name: Check known Python vulnerabilities
+        run: uvx pip-audit --no-deps -r requirements-security.txt
+
+  node-dependencies:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Check Node lockfile for high/critical vulnerabilities
+        run: npm audit --audit-level=high
+
+  static-python:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - name: Bandit high-severity findings in server/operations
+        run: uvx bandit -q -r server scripts -ll
