@@ -1,10 +1,10 @@
-# tts / faysk
+# stt / faysk
 
 **Transforme áudio e vídeo em texto.**
 
-[Usar o serviço](https://tts.faysk.dev) · [Guia de desenvolvimento](docs/DEVELOPMENT.md) · [Licença MIT](LICENSE)
+[Usar o serviço](https://stt.faysk.dev) · [Guia de desenvolvimento](docs/DEVELOPMENT.md) · [Licença MIT](LICENSE)
 
-tts / faysk é uma plataforma aberta de transcrição, com processamento acelerado por GPU, reconhecimento multilíngue e exportação em formatos prontos para leitura, edição e legendagem. O acesso público é gratuito e não exige cadastro.
+stt / faysk é uma plataforma aberta de transcrição, com processamento acelerado por GPU, reconhecimento multilíngue e exportação em formatos prontos para leitura, edição e legendagem. O acesso público é gratuito e não exige cadastro.
 
 ## Como usar
 
