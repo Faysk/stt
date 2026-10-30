@@ -203,24 +203,41 @@ async def lifespan(app):
 
 app = FastAPI(title='Faysk Transcription Lab', lifespan=lifespan)
 
+def secure_api_response(response, path):
+    """Apply the same privacy headers to normal and early-rejected responses."""
+    response.headers['Cache-Control'] = 'no-store'
+    response.headers['X-Content-Type-Options'] = 'nosniff'
+    response.headers['Referrer-Policy'] = 'no-referrer'
+    if path.startswith('/api/') or path == '/admin.html':
+        response.headers['X-Robots-Tag'] = 'noindex, nofollow, noarchive'
+    response.headers['Content-Security-Policy'] = (
+        "default-src 'self'; style-src 'self'; script-src 'self'; "
+        "img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; "
+        "base-uri 'none'; form-action 'self'")
+    return response
+
+
 @app.middleware('http')
 async def guard(request: Request, call_next):
+    def denied(detail, status):
+        return secure_api_response(JSONResponse({'detail':detail}, status_code=status),
+                                   request.url.path)
     length = request.headers.get('content-length')
     if length and (not length.isdecimal() or int(length)>MAX_BYTES+1024*1024):
-        return JSONResponse({'detail':'Limite de 90 MB por arquivo.'}, status_code=413)
+        return denied('Limite de 90 MB por arquivo.', 413)
     if getenv('TTS_REQUIRE_EDGE') == '1':
         key = getenv('TTS_EDGE_KEY', '')
         if not key or not hmac.compare_digest(request.headers.get('x-edge-key', ''), key):
-            return JSONResponse({'detail':'Origem não autorizada.'}, status_code=403)
+            return denied('Origem não autorizada.', 403)
     if request.url.path in ('/api/jobs/upload','/api/jobs/youtube') and request.method=='POST':
         token=request.headers.get('x-session-key','')
         if len(token)!=64 or any(ch not in '0123456789abcdef' for ch in token):
-            return JSONResponse({'detail':'Sessão inválida.'},status_code=401)
+            return denied('Sessão inválida.', 401)
     slot = None
     try:
         slot = preflight(request)
     except HTTPException as exc:
-        return JSONResponse({'detail':exc.detail},status_code=exc.status_code)
+        return denied(exc.detail, exc.status_code)
     request.state.upload_slot = slot
     try:
         response = await call_next(request)
@@ -228,13 +245,7 @@ async def guard(request: Request, call_next):
         if slot:
             with db() as c:
                 c.execute('DELETE FROM upload_slots WHERE id=?',(slot,))
-    response.headers['Cache-Control'] = 'no-store'
-    response.headers['X-Content-Type-Options'] = 'nosniff'
-    response.headers['Referrer-Policy'] = 'no-referrer'
-    if request.url.path.startswith('/api/') or request.url.path=='/admin.html':
-        response.headers['X-Robots-Tag']='noindex, nofollow, noarchive'
-    response.headers['Content-Security-Policy'] = "default-src 'self'; style-src 'self'; script-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
-    return response
+    return secure_api_response(response, request.url.path)
 
 def secret(request, env, header):
     expected = getenv(env, '')
@@ -328,18 +339,57 @@ def new_job(c, own, title, source, request=None):
     return jid
 
 class BodyLimit:
-    def __init__(self, app): self.app=app
-    async def __call__(self,scope,receive,send):
-        if scope['type']!='http': return await self.app(scope,receive,send)
-        size=0
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope['type'] != 'http':
+            return await self.app(scope, receive, send)
+        size = 0
+        exceeded = False
+        responded = False
+        started = False
+
         async def limited():
-            nonlocal size
-            message=await receive()
-            size+=len(message.get('body',b''))
-            if size>MAX_BYTES+1024*1024:
-                raise HTTPException(413,'Limite de 90 MB por arquivo.')
+            nonlocal size, exceeded
+            if exceeded:
+                return {'type':'http.request', 'body':b'', 'more_body':False}
+            message = await receive()
+            if message['type'] != 'http.request':
+                return message
+            size += len(message.get('body', b''))
+            if size > MAX_BYTES + 1024*1024:
+                # The multipart parser may turn exceptions raised by receive()
+                # into HTTP 400. Send an explicit 413 instead, while ensuring
+                # no further bytes are passed to the application.
+                exceeded = True
+                return {'type':'http.request', 'body':b'', 'more_body':False}
             return message
-        await self.app(scope,limited,send)
+
+        async def reject():
+            response = secure_api_response(
+                JSONResponse({'detail':'Limite de 90 MB por arquivo.'}, status_code=413),
+                scope.get('path',''))
+            await response(scope, receive, send)
+
+        async def limited_send(message):
+            nonlocal responded, started
+            if exceeded:
+                if not responded and not started:
+                    responded = True
+                    await reject()
+                return
+            if message['type'] == 'http.response.start':
+                started = True
+            await send(message)
+
+        try:
+            await self.app(scope, limited, limited_send)
+        except Exception:
+            if exceeded and not started and not responded:
+                await reject()
+                return
+            raise
 
 app.add_middleware(BodyLimit)
 
