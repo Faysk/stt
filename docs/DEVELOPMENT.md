@@ -49,7 +49,7 @@ A validação real de Whisper/CUDA e das transcrições continua obrigatória; C
 
 O card **Galaxy S7 Edge · SSH** aparece no console administrativo. Os dados de ligação só são enviados na API autenticada do painel. No `.env` privado do host da API, configure `STT_S7_SSH_HOST`, `STT_S7_SSH_USER` e, opcionalmente, `STT_S7_SSH_PORT=8022`. Reinicie a API para carregar o `.env`. O card permite copiar o comando para executar num terminal ligado à LAN; o navegador não abre sessões SSH.
 
-O SSH **não** instala Python, modelos, CTranslate2 ou um worker. O dispositivo somente poderá ser selecionado como executor quando `STT_WORKER_ID=s7-edge` estiver registrado/online, anunciar CPU e formato compatíveis e tiver o modelo Whisper em cache. A API recusa escolher o S7 sem essas condições e preserva o executor atual. Android 7/Termux exige ensaio de compatibilidade e desempenho próprio antes de receber trabalhos públicos; não abrir a porta SSH para a Internet.
+O SSH **não** instala Python, modelos, CTranslate2 ou um worker. O dispositivo somente poderá ser selecionado como executor quando `STT_WORKER_ID=s7-edge` estiver registrado/online, anunciar CPU e formato compatíveis e tiver o modelo Whisper em cache. A API recusa escolher o S7 sem essas condições e preserva o executor atual. O teste físico confirmou Android 8 e inferência local de Tiny via whisper.cpp. O worker nativo (Python stdlib, HTTPS de saída) é configurado independentemente do SSH e requer chave dedicada, FFmpeg, opt-in e ensaio E2E antes do uso público. Não abrir a porta SSH para a Internet. Consulte [Worker S7 Termux](S7_NATIVE_WORKER.md).
 
 ## Mais detalhes
 
