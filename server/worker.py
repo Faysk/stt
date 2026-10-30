@@ -317,8 +317,12 @@ def worker_capabilities():
                                 capture_output=True,text=True,timeout=3,**flags)
         if response.returncode==0 and response.stdout.strip():
             fields=[part.strip() for part in response.stdout.splitlines()[0].split(',')]
+            try:
+                available_vram=int(float(fields[2]))
+            except (ValueError,IndexError):
+                available_vram=None
             caps['gpu']={'name':fields[0][:120],'vram_mb':int(float(fields[1])),
-                         'free_vram_mb':int(float(fields[2]))}
+                         'free_vram_mb':available_vram}
             try:
                 import ctranslate2
                 caps['compute_types']['cuda']=sorted(ctranslate2.get_supported_compute_types('cuda'))
