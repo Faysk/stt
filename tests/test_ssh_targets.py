@@ -44,6 +44,7 @@ def test_s7_ssh_is_admin_only_and_not_a_worker(tmp_path, monkeypatch):
         assert client.put("/api/admin/settings",headers={"x-admin-key":"admin-test"},json=request).status_code == 409
         client.post("/api/worker/claim",headers={"x-worker-key":"worker-test"},
                     json={"id":"s7-edge","info":{"compute_types":{"cpu":["int8"]},"models":[{"id":"tiny"}]}})
+        monkeypatch.setenv("STT_S7_ENABLED", "1")
         assert client.put("/api/admin/settings",headers={"x-admin-key":"admin-test"},json=request).status_code == 200
         request["device"] = "cuda"
         request["compute"] = "float16"
