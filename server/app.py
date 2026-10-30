@@ -702,6 +702,8 @@ def settings(s: Settings):
     # Until the S7 reports compatible CPU compute and a prepared Whisper model,
     # selecting it would strand public jobs in the queue.
     if s.worker == 's7-edge':
+        if getenv('STT_S7_ENABLED','0') != '1':
+            raise HTTPException(409,'S7 desativado: configure STT_S7_ENABLED=1 após homologação.')
         with db() as c:
             row = c.execute('SELECT seen,info FROM workers WHERE id=?',(s.worker,)).fetchone()
         info = json.loads(row['info']) if row else {}
@@ -737,6 +739,8 @@ def valid_worker_name(value):
 
 @app.post('/api/admin/model-preloads',dependencies=[Depends(admin)],status_code=202)
 def request_model_preload(value: ModelPreloadRequest):
+    if value.worker == 's7-edge':
+        raise HTTPException(409,'S7 usa pesos GGML instalados pelo operador; não aceita preload remoto.')
     if value.model not in MODELS or not valid_worker_name(value.worker):
         raise HTTPException(400,'Executor ou modelo inválido.')
     now=time.time()
@@ -838,7 +842,7 @@ def claim(w: Claim, request: Request):
         if w.id == 's7-edge':
             # Safe first rollout: short upload audio only. Never lease YouTube,
             # video, or large media to this phone and then fail them immediately.
-            permitted={'.wav','.mp3','.m4a','.ogg','.flac','.aac','.opus'}
+            permitted={'.wav','.mp3'}
             r = next((item for item in candidates
                       if item['source']=='upload' and 0 < item['input_bytes'] <= 8*1024**2
                       and Path(item['title'] or '').suffix.lower() in permitted),None)
@@ -851,7 +855,9 @@ def claim(w: Claim, request: Request):
         c.execute("UPDATE jobs SET status='running',started=?,worker=?,model=?,device=?,compute=?,engine=?,gpu_name=?,lease=?,heartbeat=?,progress=0,attempts=attempts+1,error=NULL WHERE id=?", (now,w.id,cfg['model'],cfg['device'],cfg['compute'],cfg.get('engine','whisper'),gpu_name,lease,now,r['id']))
         c.execute("UPDATE jobs SET stage='preparing' WHERE id=?",(r['id'],))
         obs.event(c,r['id'],'started',w.id,dict(model=cfg['model'],device=cfg['device'],compute=cfg['compute']))
-        return {'job':dict(id=r['id'],source=r['source'],lease=lease,expires=r['expires'],**cfg)}
+        extra = ({'input_type':Path(r['title'] or '').suffix.lower().lstrip('.')}
+                 if w.id == 's7-edge' else {})
+        return {'job':dict(id=r['id'],source=r['source'],lease=lease,expires=r['expires'],**cfg,**extra)}
 
 def leased(c,jid,lease,scope=None):
     r = c.execute("SELECT * FROM jobs WHERE id=? AND lease=? AND status='running' AND expires>?", (jid,lease,time.time())).fetchone()
