@@ -86,3 +86,34 @@ def test_permanent_unprocessable_payload_still_quarantines(tmp_path,monkeypatch)
     data=json.loads(path.read_text())
     assert data['dead_letter_status']==422
     assert data['payload']['text']=='bad payload'
+
+
+def test_early_api_denials_have_privacy_security_headers(tmp_path,monkeypatch):
+    monkeypatch.setenv('TTS_DATA',str(tmp_path))
+    monkeypatch.setenv('TTS_ADMIN_KEY','test-admin')
+    monkeypatch.setenv('TTS_WORKER_KEY','test-worker')
+    monkeypatch.setenv('TTS_REQUIRE_EDGE','0')
+    monkeypatch.delenv('STT_DATA',raising=False)
+    monkeypatch.delenv('STT_ADMIN_KEY',raising=False)
+    monkeypatch.delenv('STT_WORKER_KEY',raising=False)
+    monkeypatch.delenv('STT_REQUIRE_EDGE',raising=False)
+    monkeypatch.delenv('STT_EDGE_KEY',raising=False)
+    with patch('dotenv.load_dotenv',lambda *a,**kw:None):
+        import server.app as module
+        module=importlib.reload(module)
+        with TestClient(module.app) as client:
+            denied=client.post('/api/jobs/upload',headers={'x-session-key':'bad'},
+                               content=b'no session')
+            big=client.post('/api/jobs/upload',
+                 headers={'x-session-key':'a'*64,'content-length':str(100*1024*1024)},
+                 content=b'')
+            monkeypatch.setenv('TTS_REQUIRE_EDGE','1')
+            monkeypatch.setenv('TTS_EDGE_KEY','secret-edge')
+            forbidden=client.get('/api/health')
+        for res,code in [(denied,401),(big,413),(forbidden,403)]:
+            assert res.status_code==code,res.text
+            assert res.headers['cache-control']=='no-store'
+            assert res.headers['x-content-type-options']=='nosniff'
+            assert res.headers['referrer-policy']=='no-referrer'
+            assert res.headers['x-robots-tag']=='noindex, nofollow, noarchive'
+            assert "default-src 'self'" in res.headers['content-security-policy']
