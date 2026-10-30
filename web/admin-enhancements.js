@@ -206,7 +206,10 @@
       const card = node('article','', 'worker-card ssh-target-card');
       card.append(
         node('strong', target.label + ' · SSH'),
-        node('p', capable ? 'Executor STT registrado · validar transcrição real'
+        node('p', dashboardData.s7_side_worker
+          ? (online ? 'Worker paralelo online · Tiny WAV/MP3 até 120 s'
+                    : 'Modo paralelo habilitado · worker offline')
+          : capable ? 'Executor STT registrado · validar transcrição ponta a ponta'
           : online ? 'Worker conectado · capacidade do modelo/CPU ainda não validada'
             : 'Somente acesso SSH · nenhum executor STT online', 'small muted'),
         node('code',target.command || 'SSH não configurado no servidor')
