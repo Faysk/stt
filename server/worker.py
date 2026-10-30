@@ -1,7 +1,9 @@
 """Outbound-only executor. Run on a trusted PC with the shared worker secret."""
+import hashlib
 import json
 import os
 import platform
+import signal
 import subprocess
 import sys
 import tempfile
@@ -19,10 +21,116 @@ HEADERS = {'x-worker-key':os.environ['TTS_WORKER_KEY'],'x-edge-key':os.getenv('T
 IDENTITY = os.getenv('TTS_WORKER_ID','notebook')
 client = httpx.Client(base_url=BASE,headers=HEADERS,timeout=60)
 
+ROOT = Path(__file__).resolve().parents[1]
+OUTBOX = Path(os.getenv('TTS_OUTBOX', str(ROOT / 'worker-outbox'))).resolve()
+
+def _outbox_path(job):
+    name = ''.join(c for c in job['id'] if c.isalnum() or c in '-_')[:80]
+    if name != job['id'] or not name:
+        raise ValueError('Invalid job identifier')
+    digest = hashlib.sha256(job['lease'].encode()).hexdigest()[:20]
+    return OUTBOX / f'{name}-{digest}.json'
+
+def _atomic_json(path, value):
+    path.parent.mkdir(parents=True,exist_ok=True)
+    temp = path.with_name(path.name + '.' + os.urandom(6).hex() + '.tmp')
+    data = json.dumps(value,ensure_ascii=False).encode('utf-8')
+    fd = os.open(temp,os.O_WRONLY | os.O_CREAT | os.O_EXCL,0o600)
+    try:
+        with os.fdopen(fd,'wb') as stream:
+            stream.write(data)
+            stream.flush()
+            os.fsync(stream.fileno())
+        temp.replace(path)
+    finally:
+        temp.unlink(missing_ok=True)
+
+def _save_outbox(job, result):
+    path = _outbox_path(job)
+    _atomic_json(path,dict(id=job['id'],lease=job['lease'],expires=job['expires'],
+                           payload=dict(result,lease=job['lease']),attempts=0,retry_at=0,stale=False))
+    return path
+
+def _deliver(path, now=None):
+    """Only a positive API receipt can delete a completed result."""
+    data = json.loads(path.read_text(encoding='utf-8'))
+    now = time.time() if now is None else now
+    if now >= data['expires']:
+        path.unlink(missing_ok=True)  # Public retention has expired.
+        return 'expired'
+    if data['stale']:
+        return 'stale'
+    if data['retry_at']>now:
+        return 'pending'
+    try:
+        remaining = max(1,min(120,data['expires']-now))
+        response = client.post(f"/api/worker/{data['id']}/result",
+                               json=data['payload'],timeout=remaining)
+        if response.status_code==409:
+            # Do not overwrite the replacement lease; preserve evidence until expiry.
+            data['stale']=True
+            _atomic_json(path,data)
+            return 'stale'
+        response.raise_for_status()
+        receipt = response.json().get('receipt')
+        if not isinstance(receipt,str) or len(receipt)!=64:
+            raise ValueError('Missing durable result receipt')
+        path.unlink(missing_ok=True)
+        return 'acked'
+    except (httpx.HTTPError,ValueError,OSError) as error:
+        data['attempts'] += 1
+        data['retry_at'] = now + min(60,2 ** min(data['attempts'],6))
+        _atomic_json(path,data)
+        print(f"Delivery {data['id']}: {type(error).__name__}; retry queued",flush=True)
+        return 'pending'
+
+def _drain_outbox():
+    OUTBOX.mkdir(parents=True,exist_ok=True)
+    pending = False
+    for path in sorted(OUTBOX.glob('*.json')):
+        try:
+            status = _deliver(path)
+            if status == 'pending': pending = True
+        except (ValueError,OSError,KeyError) as exc:
+            # Corrupt outbox is never silently removed; an operator can inspect it.
+            print(f'Outbox {path.name}: {type(exc).__name__}',flush=True)
+            pending = True
+    return pending
+
+def _stop_child(proc):
+    if proc is None: return
+    try:
+        if proc.poll() is not None: return
+    except BaseException:
+        pass
+    # The only process group targeted is the one created for this Popen handle.
+    pid = getattr(proc,'pid',None)
+    if pid and os.name == 'nt':
+        subprocess.run(['taskkill','/PID',str(pid),'/T','/F'],
+                       capture_output=True,timeout=10,check=False)
+    elif pid:
+        try: os.killpg(pid,signal.SIGTERM)
+        except ProcessLookupError: pass
+        except OSError: proc.terminate()
+    else:
+        proc.terminate()
+    try:
+        proc.wait(timeout=5)
+    except (AttributeError,subprocess.TimeoutExpired):
+        try:
+            if pid and os.name != 'nt': os.killpg(pid,signal.SIGKILL)
+            else: proc.kill()
+        except (OSError,AttributeError): pass
+
 def execute(job):
     finished = threading.Event()
     lost = threading.Event()
-    progress_file=None
+    progress_file = None
+    proc = None
+    deadline = min(job['expires'],time.time()+7200)
+    def check_budget():
+        if lost.is_set() or time.time() >= deadline:
+            raise RuntimeError('Tempo de preparação/execução ou lease expirou.')
     def heartbeat():
         while not finished.wait(15):
             try:
@@ -30,43 +138,58 @@ def execute(job):
                 if progress_file and progress_file.exists():
                     try: progress=json.loads(progress_file.read_text(encoding='utf-8'))
                     except (ValueError,OSError): pass
-                r = client.post(f"/api/worker/{job['id']}/heartbeat",json={'lease':job['lease'],**progress})
+                r = client.post(f"/api/worker/{job['id']}/heartbeat",
+                                json={'lease':job['lease'],**progress})
                 if r.status_code==409: lost.set()
             except httpx.HTTPError:
                 pass
     thread = threading.Thread(target=heartbeat,daemon=True)
     thread.start()
     try:
-        with tempfile.TemporaryDirectory(prefix='tts-', dir=os.getenv('TTS_TMP')) as temp:
+        check_budget()
+        with tempfile.TemporaryDirectory(prefix='tts-',dir=os.getenv('TTS_TMP')) as temp:
             folder = Path(temp)
             progress_file=folder/'progress.json'
             config = folder/'job.json'
             config.write_text(json.dumps(job),encoding='utf-8')
             if job['source']=='upload':
-                with client.stream('GET',f"/api/worker/{job['id']}/input",headers={'x-lease':job['lease']}) as r:
+                check_budget()
+                timeout = httpx.Timeout(max(1,min(30,deadline-time.time())))
+                with client.stream('GET',f"/api/worker/{job['id']}/input",
+                                   headers={'x-lease':job['lease']},timeout=timeout) as r:
                     r.raise_for_status()
-                    with (folder/'input.media').open('wb') as f:
-                        for chunk in r.iter_bytes(): f.write(chunk)
-            proc = subprocess.Popen([sys.executable,'-m','server.infer',str(config)],cwd=Path(__file__).resolve().parents[1])
-            deadline = min(time.time()+7200,job['expires'])
+                    with (folder/'input.media').open('wb') as stream:
+                        for chunk in r.iter_bytes():
+                            check_budget()
+                            stream.write(chunk)
+                            check_budget()
+            check_budget()  # Nothing may spawn after a slow or expired download.
+            flags = {'creationflags':subprocess.CREATE_NEW_PROCESS_GROUP} if os.name=='nt' else {'start_new_session':True}
+            proc = subprocess.Popen([sys.executable,'-m','server.infer',str(config)],cwd=ROOT,**flags)
             while proc.poll() is None:
-                if lost.is_set() or time.time()>deadline:
-                    proc.kill()
-                    proc.wait()
-                    raise RuntimeError('Tempo de execução ou lease expirou.')
-                time.sleep(1)
+                check_budget()
+                time.sleep(min(1,max(0.01,deadline-time.time())))
+            check_budget()
             output = folder/'result.json'
             if not output.exists(): raise RuntimeError('Executor finalizou sem resultado.')
             result = json.loads(output.read_text(encoding='utf-8'))
-            result['lease']=job['lease']
-            r = client.post(f"/api/worker/{job['id']}/result",json=result,timeout=120)
-            r.raise_for_status()
-    except Exception as e:
-        print(f"Job {job['id']}: {type(e).__name__}",flush=True)
-        try:
-            client.post(f"/api/worker/{job['id']}/result",json={'lease':job['lease'],'error':'Falha no executor. Tente outro arquivo ou avise o administrador.'}).raise_for_status()
-        except httpx.HTTPError: pass
+            if not isinstance(result,dict):
+                raise ValueError('Invalid engine result')
+            if not result.get('error'):
+                result.setdefault('result_state','complete' if result.get('segments') else 'unknown')
+            path = _save_outbox(job,result)  # Durable before the temp folder is removed.
+            _deliver(path)
+    except Exception as error:
+        print(f"Job {job['id']}: {type(error).__name__}",flush=True)
+        if not lost.is_set() and time.time() < deadline:
+            # Processing failed: report failure. Transport errors never enter here.
+            try:
+                path = _save_outbox(job,{'error':'Falha no executor. Tente outro arquivo ou avise o administrador.'})
+                _deliver(path)
+            except (OSError,ValueError) as exc:
+                print(f"Job {job['id']}: unable to persist failure: {type(exc).__name__}",flush=True)
     finally:
+        _stop_child(proc)
         finished.set()
         thread.join(timeout=2)
 
@@ -74,6 +197,9 @@ def main():
     print(f'Executor {IDENTITY} conectado a {BASE}',flush=True)
     while True:
         try:
+            if _drain_outbox():
+                time.sleep(5)
+                continue
             r=client.post('/api/worker/claim',json={'id':IDENTITY,'info':{'system':platform.system(),'machine':platform.machine(),'cpu':os.cpu_count(),'engine':'faster-whisper','versions':package_versions()}})
             r.raise_for_status()
             job=r.json()['job']
