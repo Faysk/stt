@@ -45,6 +45,12 @@ Antes da publicação, aponte `stt-origin.faysk.dev` para uma API autenticada po
 
 A validação real de Whisper/CUDA e das transcrições continua obrigatória; CI isolado não testa a GPU do operador.
 
+## Gerenciamento SSH do Galaxy S7 Edge
+
+O card **Galaxy S7 Edge · SSH** aparece no console administrativo. Os dados de ligação só são enviados na API autenticada do painel. No `.env` privado do host da API, configure `STT_S7_SSH_HOST`, `STT_S7_SSH_USER` e, opcionalmente, `STT_S7_SSH_PORT=8022`. Reinicie a API para carregar o `.env`. O card permite copiar o comando para executar num terminal ligado à LAN; o navegador não abre sessões SSH.
+
+O SSH **não** instala Python, modelos, CTranslate2 ou um worker. O dispositivo somente poderá ser selecionado como executor quando `STT_WORKER_ID=s7-edge` estiver registrado/online, anunciar CPU e formato compatíveis e tiver o modelo Whisper em cache. A API recusa escolher o S7 sem essas condições e preserva o executor atual. Android 7/Termux exige ensaio de compatibilidade e desempenho próprio antes de receber trabalhos públicos; não abrir a porta SSH para a Internet.
+
 ## Mais detalhes
 
 - [Qwen e benchmarks](QWEN_AND_BENCHMARK.md)
