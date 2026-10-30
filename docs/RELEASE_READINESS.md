@@ -74,3 +74,26 @@ O operador autorizou encerrar **somente o trabalho já efetivamente entregue**. 
 **Principais critérios ainda não demonstrados:** #35 serviço Windows persistente após boot/logoff, #36 validação exata de digest de receipt, #37 E2E de upload/GPU/retention em Windows, #38 limites de body JSON, #46–#48 progresso/recuperação total de preload, #53 GPU por processo, #54 ordenação global, #19 rollback testado. Qwen (#7) continua pesquisa opcional; não declarar 100% do produto com base na proporção de tickets fechados.
 
 **Escopo de #3:** o outbox durável e tratamento de timeout estão entregues; a comparação criptográfica exata de recibo permanece no item especializado #36. **Escopo de #4:** encerramento de filho testado em CI; autostart e comportamento real após reboot permanecem em #35. **Escopo de #21:** consistência por geração de arquivo entregue; ensaio operacional completo permanece em #19/#37.
+
+## Incidentes após o smoke inicial — atualização 30/10/2026
+
+O histórico inicial do documento permanece válido apenas para os instantes em que foi verificado. Uma tentativa posterior de `pwsh -File .\scripts\publish-stt.ps1 -Apply -QueueDrained` na `main` **7ad6d15578698ae223e8a552dc5d861e7e13cc83** terminou **antes** de publicar o Cloudflare Worker:
+
+| Gate/ocorrência | Evidência do operador | Estado real |
+|---|---|---|
+| Testes pré-restart | **86 passed, 3 skipped**, Node checks e Wrangler dry-run; HTTP site/API/origem `200/200/403` antes do stop | Aprovados **nesse checkout**; não equivalem a deploy. |
+| Release manual | `stop.ps1` executado; porta 8765 observada livre no gate e ocupada em `start.ps1:8` logo depois; release abortou antes de `npm run deploy` | **Falhou**. PID que ocupou a porta não identificado; observar apenas dados sanitizados. |
+| Queda pós-release | Sem listener local 8765 e sem processos Python STT encontrados; API pública **HTTP 530** | **Indisponibilidade momentânea confirmada**, [#35](https://github.com/Faysk/stt/issues/35)/[#75](https://github.com/Faysk/stt/issues/75). |
+| Recuperação manual | Operador executou `start.ps1`; após 10 segundos **API pública 200 / frontend 200**; `GET 127.0.0.1:8765/api/health` sem segredo devolveu **403 esperado** pois `STT_REQUIRE_EDGE=1` | **HTTP recuperado nesse instante**, não homologação E2E nem prova de autostart. |
+| Resultado de inferência | Job real gerou 147 segmentos, mas os dois finais ultrapassaram duração declarada; **HTTP 422** e falso `heartbeat_timeout` | Causa raiz da entrega confirmada; [#69](https://github.com/Faysk/stt/issues/69)/[PR #71](https://github.com/Faysk/stt/pull/71) corrigem em código **ainda sem merge ou deploy**. |
+| Windows BSOD | Dump analisado localmente em WinDbg: **30/10/2026 18:53:26.322 UTC**, `0xEF` e processo crítico `svchost.exe` | [#72](https://github.com/Faysk/stt/issues/72): causa do encerramento ainda desconhecida; não presumir falha NVIDIA, CUDA ou Whisper. |
+
+**Separação de evidência:** os primeiros retornos HTTP 422 ocorreram antes do BSOD; resultados não são a mesma RCA. O patch de restart que preserva o Tunnel está versionado na `main` após o checkout `7ad6d155` ([#76](https://github.com/Faysk/stt/issues/76)), mas **a revisão nova ainda não foi submetida ao mesmo release físico após a recuperação**; não marcar o incidente de release como corrigido na instalação.
+
+**Gates ainda abertos:** [#35](https://github.com/Faysk/stt/issues/35) estabilidade/serviço Windows, [#75](https://github.com/Faysk/stt/issues/75) Tunnel, [#69](https://github.com/Faysk/stt/issues/69) entrega HTTP 422 e E2E novo, [#72](https://github.com/Faysk/stt/issues/72) diagnóstico BSOD, [#37](https://github.com/Faysk/stt/issues/37) testes físicos. Não reexecutar `-Apply` apenas para reparar indisponibilidade; diagnosticar primeiro API/Tunnel/porta e executar recuperação controlada conforme runbook.
+
+**Milestones:** os cinco marcos descritos neste documento continuam **propostos** e não representam criação ou atribuição nativa no GitHub STT. Nenhuma issue crítica foi declarada concluída por testes sintéticos; [IaC #52](https://github.com/Faysk/iac/issues/52) está vinculada ao milestone nativo nº 5 do IaC. A política [IaC MAPPING_GATE](https://github.com/Faysk/iac/blob/main/docs/MAPPING_GATE.md) segue bloqueada; documentação não autoriza mudanças de infraestrutura.
+
+### Sincronização de milestones nativos
+
+A [workflow de metadados](../.github/workflows/sync-release-milestones.yml) cria idempotentemente **STT-M1 a STT-M5** e associa as issues abertas conforme a matriz acima, incluindo os incidentes #69/#72/#75 no M2, #35 no M2, #37 no M4 e #66 no M3. Preserva marcos escolhidos manualmente, não altera issues fechadas e não executa deploy, Terraform nem alteração de servidores/Cloudflare. É acionada após merge de sua própria definição em `main`, ou por `workflow_dispatch` explícito; **somente resultado confirmado da Action e associação consultada no GitHub comprovam sincronização concluída**.
