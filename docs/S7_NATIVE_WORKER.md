@@ -12,7 +12,7 @@ Em 30/10/2026, o Samsung S7 Edge real (Android 8, arm64-v8a) compilou `whisper.c
 - O código `s7/worker.py` usa somente biblioteca padrão do Python Android 3.14.8; não instala `httpx`, `faster-whisper` ou `ctranslate2`.
 - A API aceita `STT_S7_WORKER_KEY` separada e restringe o token ao worker `s7-edge` e aos seus leases. O token mestre `STT_WORKER_KEY` continua somente no Windows.
 - O dispositivo anuncia `engine=whisper.cpp`, modelo `tiny` GGML, CPU e perfil compatível `float32` no contrato do STT. **Não significa que os pesos GGML Tiny sejam float32**: o peso do modelo compilado pode ser FP16. Não habilitar modos INT8/floating mistos sem ensaio real.
-- A API só atribui ao S7 **uploads de áudio com extensão `.wav/.mp3/.m4a/.ogg/.flac/.aac/.opus` com até 8 MiB**. No telefone, a conversão FFmpeg transforma o conteúdo em WAV PCM16 mono 16kHz e limita a **120 segundos** de áudio validado. **Vídeos, YouTube e jobs maiores continuam aguardando outro executor** quando o S7 estiver selecionado; o STT atual possui seleção manual de um worker, não escalonamento multiworker.
+- A API só atribui ao S7 **uploads de áudio com extensão `.wav/.mp3/.m4a/.ogg/.flac/.aac/.opus` com até 8 MiB**. No telefone, a conversão FFmpeg transforma o conteúdo em WAV PCM16 mono 16kHz e limita a **120 segundos** de áudio validado. **Outros formatos, vídeos, YouTube e jobs maiores continuam aguardando outro executor** quando o S7 estiver selecionado; o STT atual possui seleção manual de um worker, não escalonamento multiworker.
 - Execução subprocesso isolada, 2 threads, prazo máximo local 10 minutos, heartbeat a cada 15 s; spool de resultado privado e atômico com confirmação por recibo da API. Em falha de conversão/inferência, devolve erro sem expor a mídia nos logs. O código jamais acessa os bancos do Observatory.
 
 ## 1. Preparação no Windows
@@ -51,7 +51,7 @@ Aparecerá `s7-edge` no painel após o primeiro `POST /api/worker/claim`. Evite 
 
 1. Depois de confirmar que o S7 está online e anuncia Tiny, defina `STT_S7_ENABLED=1` no `.env` do host Windows e reinicie **somente a API** pelo procedimento supervisionado, após drenar a fila.
 2. No console admin, selecione **s7-edge → Whisper → Tiny → CPU → float32** e salve. O perfil `float32` é uma compatibilidade da API e a UI apresenta ressalva sobre os pesos GGML.
-3. Envie um WAV curto de teste autorizado pelo site; acompanhe heartbeat e resultado TXT/SRT/JSON. Se houver jobs de YouTube na fila, troque manualmente para o executor notebook quando desejar processá-los.
+3. Envie um WAV ou MP3 curto de teste autorizado pelo site; acompanhe heartbeat e resultado TXT/SRT/JSON. Se houver jobs de YouTube na fila, troque manualmente para o executor notebook quando desejar processá-los.
 4. Para retornar ao notebook, altere o worker ativo no administrador. O código não tenta distribuir automaticamente jobs entre todos os workers cadastrados.
 
 ## Verificações e limites
