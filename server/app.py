@@ -844,6 +844,33 @@ def heartbeat(jid: str, h: Heartbeat):
         c.execute('UPDATE workers SET seen=? WHERE id=?',(now,r['worker']))
     return {'ok':True}
 
+class ResultRejection(BaseModel):
+    """Worker-only notice for rejected result schema; never carries transcript data."""
+
+    model_config = {'extra':'forbid'}
+    lease: str = Field(min_length=1, max_length=128)
+    reason: str = Field(pattern=r'^result_schema_rejected$')
+
+
+@app.post('/api/worker/{jid}/reject', dependencies=[Depends(worker)])
+def reject_invalid_result(jid: str, notice: ResultRejection):
+    """Record an explicit failure for the active lease, not a false timeout."""
+    now = time.time()
+    with db() as c:
+        c.execute('BEGIN IMMEDIATE')
+        r = leased(c,jid,notice.lease)
+        changed = c.execute("""UPDATE jobs SET status='failed',outcome='failed',
+                               stage='failed',finished=?,error=?,progress=0,
+                               lease=NULL
+                               WHERE id=? AND lease=? AND status='running'
+                               AND expires>?""",
+                            (now,'Resultado do executor inválido; entrega rejeitada pela API.',jid,notice.lease,now))
+        if changed.rowcount != 1:
+            raise HTTPException(409,'Lease expirado.')
+        obs.event(c,jid,'failed',r['worker'],{'reason':'result_schema_rejected'})
+    return {'ok':True}
+
+
 class Segment(BaseModel):
     start: float = Field(ge=0,le=7200,allow_inf_nan=False)
     end: float = Field(ge=0,le=7200,allow_inf_nan=False)
