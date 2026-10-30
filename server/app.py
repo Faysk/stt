@@ -596,7 +596,10 @@ class Result(BaseModel):
     runtime: dict = Field(default_factory=dict)
     model_revision: str | None = Field(default=None,max_length=80)
     title: str | None = Field(default=None,max_length=180)
-    result_state: str = Field(default='unknown',pattern='^(unknown|complete|silence|partial)
+    result_state: str = Field(default='unknown',pattern='^(unknown|complete|silence|partial)$')
+    metrics: dict | None = None
+    text: str | None = Field(default=None,max_length=500000)
+    timing: str = Field(default='segments',pattern='^(segments|none)$')
 
     @model_validator(mode='after')
     def chronology(self):
