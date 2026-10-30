@@ -112,7 +112,9 @@ function makeJobCard(j){
 }
 function updateJobCard(card,j){
  const prior=card.dataset.status;
- card.dataset.status=j.status;
+ const stage=j.status==='running'?(j.stage||'transcribing'):j.status;
+ const stageChanged=prior&&(prior!==j.status||card.dataset.stage!==stage);
+ card.dataset.status=j.status;card.dataset.stage=stage;
  card.querySelector('.file-symbol').textContent=j.title==='YouTube'||j.title?.includes('YouTube')?'↗':'≋';
  card.querySelector('.transcript-title').textContent=j.title||'Transcript';
  card.querySelector('.transcript-date').textContent=date(j.created);
@@ -121,7 +123,7 @@ function updateJobCard(card,j){
   +(j.status==='queued'&&j.position?' · #'+j.position:'')
   +(j.status==='running'&&Number.isFinite(j.progress)&&j.progress>0?' · '+Math.round(j.progress)+'%':'');
  let state=meta.querySelector('.badge');
- if(prior&&prior!==j.status){
+ if(stageChanged){
   const updated=el('span','badge state-'+j.status+' state-arrive',stateText);
   state.replaceWith(updated);state=updated;
  }else{
