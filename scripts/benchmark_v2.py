@@ -17,6 +17,8 @@ import time
 import unicodedata
 from pathlib import Path
 
+# Direct invocation via "python scripts/benchmark_v2.py" needs the project root.
+sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 from server.qwen_engine import RECIPES
 
 def normalize(text):
