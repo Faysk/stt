@@ -17,6 +17,20 @@ jobs:
       - run: node tests/session_compat.test.cjs
       - run: node tests/edge.test.cjs
 
+  worker-stt-build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install locked Wrangler
+        run: npm ci
+      - name: Validate isolated STT Worker locally without credentials or deploy
+        run: npx wrangler deploy --config wrangler.stt.jsonc --dry-run --outdir .wrangler/stt-dry-run
+
   windows-script-parse:
     runs-on: windows-latest
     steps:
