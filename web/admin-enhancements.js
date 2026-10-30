@@ -74,7 +74,7 @@
   async function requestPreload(model) {
     const worker = $('worker').value;
     if (worker === 's7-edge') {
-      showWarning('S7 Edge usa pesos GGML preparados localmente; não aceita preload remoto.');
+      // GGML Tiny is provisioned on the device, not via model preload.
       return;
     }
     const id = worker + ':' + model;
@@ -128,6 +128,10 @@
       }
       for (const link of card.querySelectorAll('a')) link.addEventListener('click',e => e.stopPropagation());
       const selectModel = () => {
+        if ($('worker').value === 's7-edge' && model !== 'tiny') {
+          showWarning('S7 Edge suporta somente Whisper Tiny em CPU; mantenha o notebook como principal para outros modelos.');
+          return;
+        }
         if ($('model').value !== model) {
           $('model').value = model;
           markDirty();
@@ -148,15 +152,33 @@
   }
   function chooseWorker(id) {
     if ($('worker').value !== id) {
+      const previous = $('worker').value;
       $('worker').value = id;
       markDirty();
-      const info = workerInfo();
-      if ($('device').value === 'cuda' &&
-          (!info.gpu || !(info.compute_types?.cuda || []).length)) {
+      if (id === 's7-edge') {
+        // Never carry notebook small/int8 or CUDA into the Android GGML worker.
+        $('model').value = 'tiny';
         $('device').value = 'cpu';
-        $('settings-message').textContent = 'CUDA indisponível no executor escolhido; seleção ajustada para CPU.';
+        precision(); // Only advertised S7 CPU formats (float32) may be selected.
+        $('settings-message').textContent = 'S7 Edge: Tiny / CPU / float32. Para execução paralela, mantenha o notebook como principal e habilite o modo secundário no servidor.';
+      } else {
+        // Returning to the configured primary must not retain Tiny/GGML settings.
+        if (previous === 's7-edge' && id === dashboardData?.settings.worker) {
+          $('model').value = dashboardData.settings.model;
+          $('device').value = dashboardData.settings.device;
+        }
+        const info = workerInfo();
+        if ($('device').value === 'cuda' &&
+            (!info.gpu || !(info.compute_types?.cuda || []).length)) {
+          $('device').value = 'cpu';
+          $('settings-message').textContent = 'CUDA indisponível no executor escolhido; seleção ajustada para CPU.';
+        }
+        precision();
+        if (previous === 's7-edge' && id === dashboardData?.settings.worker) {
+          if (optionList($('device').value).includes(dashboardData.settings.compute))
+            $('compute').value = dashboardData.settings.compute;
+        }
       }
-      precision();
     }
     rerender();
   }
@@ -323,8 +345,11 @@
       markDirty();
       if (id === 'worker') {
         const info = workerInfo();
-        if ($('device').value === 'cuda' &&
-            (!info.gpu || !(info.compute_types?.cuda || []).length)) {
+        if ($('worker').value === 's7-edge') {
+          $('model').value = 'tiny';
+          $('device').value = 'cpu';
+        } else if ($('device').value === 'cuda' &&
+                   (!info.gpu || !(info.compute_types?.cuda || []).length)) {
           $('device').value = 'cpu';
           $('settings-message').textContent = 'CUDA indisponível neste executor; dispositivo ajustado para CPU.';
         }
