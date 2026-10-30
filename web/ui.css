@@ -33,3 +33,198 @@
 .admin-locked #admin-message{width:min(420px,100%);max-width:none;text-align:center}
 @media(max-width:480px){.admin-locked .admin-main{padding:20px}.admin-locked .admin-main #admin-login{gap:10px}.admin-locked #admin-key,.admin-locked #login{height:50px}.admin-locked #login{flex-basis:50px;width:50px}}
 @media(prefers-reduced-motion:reduce){.admin-locked #admin-key,.admin-locked #login{transition:none}}
+
+
+/* Admin interactive workspace — subdued feedback, no heavy visual effects. */
+.admin-page .model-card,
+.admin-page .worker-card,
+.admin-page .choice-card {
+  transition: border-color .19s ease, background-color .19s ease, box-shadow .19s ease, transform .19s ease;
+}
+.admin-page .model-card {
+  position:relative;
+  cursor:pointer;
+  min-height:220px;
+  display:flex;
+  flex-direction:column;
+}
+.admin-page .model-card a {margin-top:auto;align-self:flex-start;padding-top:10px;position:relative;z-index:1}
+.admin-page .model-card:hover,
+.admin-page .worker-card:hover,
+.admin-page .choice-card:hover:not(:disabled) {
+  border-color:#638bb6;
+  background:#162233;
+}
+.admin-page .model-card:active,
+.admin-page .worker-card:active,
+.admin-page .choice-card:active:not(:disabled) {transform:scale(.993)}
+.admin-page .model-card:focus-visible,
+.admin-page .worker-card:focus-visible,
+.admin-page .choice-card:focus-visible {
+  outline:2px solid #79bdff;
+  outline-offset:3px;
+}
+.admin-page .model-card.active,
+.admin-page .worker-card.is-selected,
+.admin-page .choice-card.selected {
+  border-color:#6daefe;
+  background:linear-gradient(140deg,#18283c,#121d2c 75%);
+  box-shadow:0 0 0 1px #548ce52e,inset 0 1px #ffffff09;
+}
+.admin-page .model-card.pending-selection {border-style:dashed}
+.admin-page .selection-flag {
+  display:inline-flex;
+  align-items:center;
+  gap:5px;
+  margin-top:8px;
+  font-size:10px;
+  font-weight:600;
+  color:#aed5ff;
+}
+.admin-page .selection-flag:before {content:'✓';color:#80c8ae}
+.admin-page .badge.working {
+  border-color:#5c9ce077;
+  background:#4988bf22;
+  color:#a9d8ff;
+}
+.admin-page .badge.working:before {
+  content:'';
+  width:7px;height:7px;border-radius:50%;
+  border:1.5px solid #a9d8ff;
+  border-left-color:transparent;
+  animation:stt-admin-spin .9s linear infinite;
+}
+.admin-page .config-visuals {
+  display:grid;
+  grid-template-columns:minmax(0,1fr) minmax(0,1.6fr);
+  gap:20px;
+  margin-top:23px;
+}
+.admin-page .visual-group {min-width:0}
+.admin-page .visual-group h3 {
+  display:flex;align-items:center;gap:10px;flex-wrap:wrap;
+  font-size:13px;margin-bottom:10px;font-weight:600;
+}
+.admin-page .choice-grid {
+  display:grid;
+  grid-template-columns:repeat(2,minmax(0,1fr));
+  align-items:stretch;
+  gap:10px;
+}
+.admin-page #precision-cards {grid-template-columns:repeat(auto-fit,minmax(145px,1fr))}
+.admin-page .choice-card {
+  display:flex;
+  flex-direction:column;
+  gap:7px;
+  width:100%;
+  padding:13px 14px;
+  border:1px solid #34435b;
+  border-radius:9px;
+  background:#111925;
+  color:var(--text);
+  text-align:left;
+  cursor:pointer;
+  line-height:1.4;
+  min-height:107px;
+}
+.admin-page .choice-card strong {font-size:13px;color:#e3eeff;font-weight:650}
+.admin-page .choice-card span {font-size:11px;color:#9badc7}
+.admin-page .choice-card small {font-size:10px;color:#80aad1;overflow-wrap:anywhere}
+.admin-page .choice-card:disabled {cursor:not-allowed;opacity:.48}
+.admin-page .worker-card {cursor:pointer;align-items:flex-start}
+.admin-page .worker-card.is-offline {opacity:.68}
+.admin-page .worker-features {
+  display:flex;
+  align-items:center;
+  flex-wrap:wrap;
+  flex-basis:100%;
+  width:100%;
+  gap:6px;
+  border-top:1px solid #28384d;
+  padding-top:10px;
+}
+.admin-page .feature-pill {
+  font-size:10px;
+  line-height:1.5;
+  color:#a5bddc;
+  background:#172438;
+  border:1px solid #33455f;
+  border-radius:5px;
+  padding:4px 8px;
+  max-width:100%;
+  overflow-wrap:anywhere;
+}
+.admin-page .button.is-loading {cursor:progress;opacity:.83}
+.admin-page .button.is-loading:before {
+  content:'';display:inline-block;vertical-align:middle;
+  width:11px;height:11px;margin-right:7px;
+  border:2px solid currentColor;border-right-color:transparent;
+  border-radius:50%;animation:stt-admin-spin .9s linear infinite;
+}
+.admin-page .model-card:focus-within {border-color:#5b8abb}
+.admin-page #settings-message {min-height:13px}
+@keyframes stt-admin-spin {to {transform:rotate(360deg)}}
+@media(max-width:1100px) {
+  .admin-page .config-visuals {grid-template-columns:1fr}
+}
+@media(max-width:620px) {
+  .admin-page .choice-grid,
+  .admin-page #precision-cards {grid-template-columns:repeat(2,minmax(0,1fr))}
+  .admin-page .choice-card {padding:11px;min-height:110px}
+  .admin-page .model-card {min-height:0}
+}
+@media(max-width:390px) {
+  .admin-page .choice-grid,
+  .admin-page #precision-cards {grid-template-columns:1fr}
+}
+@media(prefers-reduced-motion:reduce) {
+  .admin-page .model-card,.admin-page .worker-card,.admin-page .choice-card {transition:none!important;transform:none!important}
+  .admin-page .badge.working:before,.admin-page .button.is-loading:before {animation:none!important}
+}
+
+.admin-page .skeleton-row td {padding:14px 9px}
+.admin-page .skeleton-bar {
+  display:block;width:100%;height:14px;border-radius:5px;
+  background:linear-gradient(105deg,#202e42 25%,#2c3e57 44%,#202e42 66%);
+  background-size:220% 100%;
+  animation:stt-admin-shimmer 1.5s ease-in-out infinite;
+}
+.admin-page .skeleton-row:nth-child(2n) .skeleton-bar {width:85%}
+.admin-page .skeleton-row:nth-child(3n) .skeleton-bar {width:68%}
+.admin-page .is-fetching > .section-heading::after {
+  content:'';width:10px;height:10px;flex:0 0 10px;
+  border:2px solid #7fb9f7;border-top-color:transparent;
+  border-radius:50%;animation:stt-admin-spin 1s linear infinite;
+}
+@keyframes stt-admin-shimmer {to {background-position-x:-220%}}
+@media(prefers-reduced-motion:reduce) {
+  .admin-page .skeleton-bar,.admin-page .is-fetching > .section-heading::after {animation:none!important}
+}
+
+.admin-page .config-summary {
+  display:flex;align-items:center;min-height:36px;
+  margin:1px 0 15px;
+  padding:9px 12px;border:1px solid #334b65;
+  border-radius:7px;background:#142032;
+  color:#a9ccef;font:11px/1.6 Consolas,monospace;overflow-wrap:anywhere;
+}
+.admin-page .config-summary.has-pending {border-color:#88734b;color:#e4c88e;background:#30271944}
+.admin-page .config-advanced {margin:0 0 16px;border:1px solid #2b394f;border-radius:7px;padding:8px 12px}
+.admin-page .config-advanced summary {cursor:pointer;color:#93b8e6;font-size:11px;outline-offset:4px}
+.admin-page .config-advanced[open] summary {margin-bottom:14px}
+.admin-page .config-advanced summary:focus-visible {outline:2px solid #73b0ff}
+
+.admin-page td.rtf-fast {color:#8ad7b3;font-weight:650}
+.admin-page td.rtf-slow {color:#e8b776;font-weight:650}
+.admin-page .pipeline-stages {
+  display:grid;
+  grid-template-columns:repeat(auto-fit,minmax(150px,1fr));
+  gap:9px;margin:12px 0 10px;
+}
+.admin-page .pipeline-stage {
+  border:1px solid #33445b;border-radius:7px;
+  background:#101927;padding:12px;
+  display:flex;flex-direction:column;gap:7px;
+}
+.admin-page .pipeline-stage span {font-size:11px;color:#96aac9}
+.admin-page .pipeline-stage strong {font:600 13px Consolas,monospace;color:#cde3ff}

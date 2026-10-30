@@ -71,7 +71,7 @@ def init():
         ''')
         columns={r[1] for r in c.execute('PRAGMA table_info(jobs)')}
         for name,definition in {
-            'client_tag':'TEXT','network_tag':'TEXT','ui_language':'TEXT',
+            'gpu_name':'TEXT','client_tag':'TEXT','network_tag':'TEXT','ui_language':'TEXT',
             'priority':'INTEGER DEFAULT 0','outcome':'TEXT','runtime':'TEXT',
             'model_revision':'TEXT','stage':"TEXT DEFAULT 'queued'",
             'purged_at':'REAL','purge_retry_at':'REAL DEFAULT 0','purge_attempts':'INTEGER DEFAULT 0',
@@ -83,6 +83,11 @@ def init():
         for row in c.execute("SELECT id,owner FROM jobs WHERE client_tag IS NULL AND owner!=''").fetchall():
             c.execute('UPDATE jobs SET client_tag=? WHERE id=?',(client_tag(row['owner']),row['id']))
         obs.install(c)
+        c.execute("""CREATE TABLE IF NOT EXISTS model_preloads (
+            id TEXT PRIMARY KEY, worker TEXT NOT NULL, model TEXT NOT NULL,
+            status TEXT NOT NULL, created REAL NOT NULL, updated REAL NOT NULL,
+            revision TEXT, error TEXT)""")
+        c.execute("CREATE INDEX IF NOT EXISTS model_preloads_worker ON model_preloads(worker,status,updated)")
         c.execute('INSERT OR IGNORE INTO settings VALUES (1, ?)', (json.dumps(dict(worker='notebook', model='small', device='cpu', compute='int8', paused=False)),))
 
 def _purge_job(c, jid, now):
@@ -126,6 +131,8 @@ def maintenance():
                 continue
     with db() as c:
         c.execute('BEGIN IMMEDIATE')
+        c.execute("UPDATE model_preloads SET status='pending',updated=?,error='REQUEUED_AFTER_TIMEOUT' WHERE status='running' AND updated<?",(now,now-600))
+        c.execute("DELETE FROM model_preloads WHERE status IN ('ready','failed') AND updated<?",(now-7*TTL,))
         c.execute("""UPDATE jobs SET status='expired',stage='expired',owner='',
                   title=NULL,source=NULL,error=NULL,lease=NULL,language=NULL
                   WHERE expires<=? AND status!='expired'""", (now,))
@@ -583,12 +590,13 @@ def dashboard():
           counts={r['status']:r['n'] for r in c.execute('SELECT status,count(*) n FROM jobs GROUP BY status')},
           totals=dict(c.execute("SELECT count(*) jobs,coalesce(sum(duration),0) audio_seconds,coalesce(sum(elapsed),0) processing_seconds,coalesce(sum(input_bytes),0) bytes FROM jobs").fetchone()),
           host=host_snapshot,telemetry_error=telemetry_error,now=time.time(),versions=obs.package_versions(),
-          models=MODELS,catalog=installed_models(getenv('STT_MODELS',str(ROOT/'models'))))
+          models=MODELS,catalog=installed_models(getenv('STT_MODELS',str(ROOT/'models'))),
+          preloads=[dict(r) for r in c.execute('SELECT * FROM model_preloads ORDER BY updated DESC LIMIT 100')])
 
 def admin_job(r):
     data = {k:r[k] for k in ('id','title','status','outcome','created','started','finished','expires','heartbeat',
         'client_tag','network_tag','ui_language','priority','stage','attempts','worker','model','device','compute',
-        'duration','elapsed','cpu_seconds','peak_rss_mb','peak_vram_mb','input_bytes','language','error','model_revision','runtime','engine','progress','timing','result_state','purged_at','purge_attempts','purge_retry_at','purge_error')}
+        'duration','elapsed','cpu_seconds','peak_rss_mb','peak_vram_mb','input_bytes','language','error','model_revision','runtime','engine','gpu_name','progress','timing','result_state','purged_at','purge_attempts','purge_retry_at','purge_error')}
     data['metrics'] = json.loads(r['metrics_json']) if r['metrics_json'] else None
     data['queue_seconds'] = max(0,r['started']-r['created']) if r['started'] is not None else None
     data['job_total_seconds'] = max(0,r['finished']-r['created']) if r['finished'] is not None else None
@@ -656,8 +664,17 @@ def priority(jid: str,value: Priority):
 @app.put('/api/admin/settings', dependencies=[Depends(admin)])
 def settings(s: Settings):
     if s.engine=='whisper':
-        valid = s.model in MODELS and (s.device,s.compute) in (
-            ('cpu','int8'),('cpu','float32'),('cuda','float16'),('cuda','int8_float16'))
+        supported = {
+            'cpu': ('int8','float32','int8_float32'),
+            'cuda': ('float16','int8_float16','float32','int8','bfloat16','int8_bfloat16')
+        }
+        valid = s.model in MODELS and s.compute in supported.get(s.device,())
+        if valid and (s.device,s.compute) not in (
+                ('cpu','int8'),('cpu','float32'),('cuda','float16'),('cuda','int8_float16')):
+            with db() as c:
+                row=c.execute('SELECT info FROM workers WHERE id=?',(s.worker,)).fetchone()
+            info=json.loads(row['info']) if row else {}
+            valid=s.compute in info.get('compute_types',{}).get(s.device,[])
     elif s.engine=='qwen3':
         from server.qwen_engine import RECIPES
         valid = s.model in RECIPES and s.device=='cuda' and s.compute in ('float16','bfloat16')
@@ -669,6 +686,84 @@ def settings(s: Settings):
         c.execute('UPDATE settings SET value=? WHERE id=1', (s.model_dump_json(),))
         obs.event(c,None,'settings_changed','admin',s.model_dump())
     return s
+
+
+
+class ModelPreloadRequest(BaseModel):
+    worker: str = Field(min_length=1,max_length=80)
+    model: str
+
+class ModelPreloadClaim(BaseModel):
+    worker: str = Field(min_length=1,max_length=80)
+
+class ModelPreloadReport(BaseModel):
+    worker: str = Field(min_length=1,max_length=80)
+    status: str
+    revision: str | None = Field(default=None,max_length=80)
+    error: str | None = Field(default=None,max_length=80)
+
+def valid_worker_name(value):
+    return bool(value) and all(ch in 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-' for ch in value)
+
+@app.post('/api/admin/model-preloads',dependencies=[Depends(admin)],status_code=202)
+def request_model_preload(value: ModelPreloadRequest):
+    if value.model not in MODELS or not valid_worker_name(value.worker):
+        raise HTTPException(400,'Executor ou modelo inválido.')
+    now=time.time()
+    with db() as c:
+        c.execute('BEGIN IMMEDIATE')
+        if not c.execute('SELECT 1 FROM workers WHERE id=?',(value.worker,)).fetchone():
+            raise HTTPException(404,'Executor ainda não registrado.')
+        existing=c.execute("""SELECT * FROM model_preloads WHERE worker=? AND model=?
+                AND status IN ('pending','running') ORDER BY created DESC LIMIT 1""",
+                           (value.worker,value.model)).fetchone()
+        if existing:
+            return dict(existing)
+        operation=secrets.token_hex(16)
+        c.execute('INSERT INTO model_preloads VALUES(?,?,?,?,?,?,?,?)',
+                  (operation,value.worker,value.model,'pending',now,now,None,None))
+        return dict(id=operation,worker=value.worker,model=value.model,status='pending',
+                    created=now,updated=now,revision=None,error=None)
+
+@app.post('/api/worker/model-preloads/claim',dependencies=[Depends(worker)])
+def claim_model_preload(value: ModelPreloadClaim):
+    if not valid_worker_name(value.worker):
+        raise HTTPException(400,'Executor inválido.')
+    now=time.time()
+    with db() as c:
+        c.execute('BEGIN IMMEDIATE')
+        if c.execute("SELECT 1 FROM jobs WHERE status IN ('queued','running') LIMIT 1").fetchone():
+            return {'operation':None}
+        op=c.execute("""SELECT * FROM model_preloads WHERE worker=? AND status='pending'
+                        ORDER BY created LIMIT 1""",(value.worker,)).fetchone()
+        if not op:
+            return {'operation':None}
+        c.execute("UPDATE model_preloads SET status='running',updated=? WHERE id=?",(now,op['id']))
+        return {'operation':dict(op)|{'status':'running','updated':now}}
+
+@app.post('/api/worker/model-preloads/{pid}/report',dependencies=[Depends(worker)])
+def report_model_preload(pid: str,value: ModelPreloadReport):
+    if len(pid)!=32 or any(ch not in '0123456789abcdef' for ch in pid):
+        raise HTTPException(404,'Operação não encontrada.')
+    if not valid_worker_name(value.worker):
+        raise HTTPException(400,'Executor inválido.')
+    if value.status not in ('running','ready','failed'):
+        raise HTTPException(400,'Estado inválido.')
+    with db() as c:
+        c.execute('BEGIN IMMEDIATE')
+        op=c.execute('SELECT * FROM model_preloads WHERE id=? AND worker=?',
+                     (pid,value.worker)).fetchone()
+        if not op:
+            raise HTTPException(404,'Operação não encontrada.')
+        if op['status'] in ('ready','failed'):
+            return {'ok':True,'status':op['status']}
+        if op['status']!='running':
+            raise HTTPException(409,'Operação não iniciada.')
+        c.execute('UPDATE model_preloads SET status=?,updated=?,revision=?,error=? WHERE id=?',
+                  (value.status,time.time(),value.revision if value.status=='ready' else None,
+                   value.error if value.status=='failed' else None,pid))
+    return {'ok':True,'status':value.status}
+
 
 class Claim(BaseModel):
     id: str = Field(pattern=r'^[a-zA-Z0-9_-]{1,80}$')
@@ -692,7 +787,9 @@ def claim(w: Claim):
         r = c.execute("SELECT * FROM jobs WHERE status='queued' AND expires>? ORDER BY priority DESC,created,id LIMIT 1", (now,)).fetchone()
         if not r: return {'job':None}
         lease = secrets.token_hex(32)
-        c.execute("UPDATE jobs SET status='running',started=?,worker=?,model=?,device=?,compute=?,engine=?,lease=?,heartbeat=?,progress=0,attempts=attempts+1,error=NULL WHERE id=?", (now,w.id,cfg['model'],cfg['device'],cfg['compute'],cfg.get('engine','whisper'),lease,now,r['id']))
+        gpu = w.info.get('gpu') if isinstance(w.info.get('gpu'),dict) else None
+        gpu_name = str(gpu.get('name',''))[:120] if gpu and cfg['device']=='cuda' else None
+        c.execute("UPDATE jobs SET status='running',started=?,worker=?,model=?,device=?,compute=?,engine=?,gpu_name=?,lease=?,heartbeat=?,progress=0,attempts=attempts+1,error=NULL WHERE id=?", (now,w.id,cfg['model'],cfg['device'],cfg['compute'],cfg.get('engine','whisper'),gpu_name,lease,now,r['id']))
         c.execute("UPDATE jobs SET stage='preparing' WHERE id=?",(r['id'],))
         obs.event(c,r['id'],'started',w.id,dict(model=cfg['model'],device=cfg['device'],compute=cfg['compute']))
         return {'job':dict(id=r['id'],source=r['source'],lease=lease,expires=r['expires'],**cfg)}
