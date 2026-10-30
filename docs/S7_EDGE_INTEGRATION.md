@@ -1,6 +1,6 @@
 # Galaxy S7 Edge como destino SSH e candidato a worker STT
 
-**Estado:** acesso SSH suportado pelo console de administração (`#65`); **transcrição no Android ainda não homologada**. A seleção do S7 como executor continua bloqueada até o próprio worker reportar online, tipo de computação CPU compatível e pesos do modelo preparados. Seguimento: [issue #66](https://github.com/Faysk/stt/issues/66).
+**Estado:** acesso SSH no admin (`#65`) e inferência Tiny local **comprovada em 30/10/2026** via whisper.cpp CPU ARM64 (11s de áudio em 6,39s). O cliente worker STT ainda requer homologação ponta a ponta antes da ativação pública. Veja [guia do worker S7](S7_NATIVE_WORKER.md). A seleção do S7 como executor continua bloqueada até o próprio worker reportar online, tipo de computação CPU compatível e pesos do modelo preparados. Seguimento: [issue #66](https://github.com/Faysk/stt/issues/66).
 
 ## Fontes e separação de responsabilidades
 
@@ -30,12 +30,14 @@
 5. **Benchmark fora da fila pública:** WAV PT-BR conhecido, modelo leve, WER/CER, tempo por minuto de áudio (RTF), RSS pico, throttling, temperatura e impacto na coleta do observatório. Aplicar limites e política de retenção do STT e validar outbox/heartbeat/lease/retries antes de qualquer worker público.
 6. **Ativação:** só selecionar `s7-edge` depois que um worker real `STT_WORKER_ID=s7-edge` estiver online e anunciar o modelo preparado e compute CPU suportado. Aprovação operacional separada antes de aceitar empregos públicos.
 
-[Pré-teste de compatibilidade Termux somente leitura](S7_STT_READONLY_PREFLIGHT.md).\n\n## Checklist de evidências adicionais
+[Pré-teste de compatibilidade Termux somente leitura](S7_STT_READONLY_PREFLIGHT.md).
+
+## Checklist de evidências adicionais
 
 - [x] Localização do frontend e backend de telemetria; referências versionadas.
 - [x] Homologação funcional em LAN no S7 e dados históricos de espaço.
-- [ ] Versão atual de Android/ABI/Python, RAM disponível e espaço atual registrados por preflight read-only.
-- [ ] Motor ARM/Termux selecionado com prova de transcrição real.
+- [x] Preflight real Android 8.0, ARM64, Python 3.14.8, RAM e armazenamento registrado na issue #66.
+- [x] Motor whisper.cpp compilado em Termux e prova de transcrição real WAV 11s em 6,39s.
 - [ ] Benchmark, consumo e isolamento comprovados sem interferir na operação do observatório.
 - [ ] Protocolo de worker homologado em ambiente de teste.
 - [ ] Revisão de segurança e aprovação para eventual ativação pública.
