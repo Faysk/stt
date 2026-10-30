@@ -607,7 +607,8 @@ def dashboard():
           host=host_snapshot,telemetry_error=telemetry_error,now=time.time(),versions=obs.package_versions(),
           models=MODELS,catalog=installed_models(getenv('STT_MODELS',str(ROOT/'models'))),
           preloads=[dict(r) for r in c.execute('SELECT * FROM model_preloads ORDER BY updated DESC LIMIT 100')],
-          ssh_targets=ssh_targets())
+          ssh_targets=ssh_targets(),
+          s7_side_worker=(getenv('STT_S7_ENABLED','0')=='1' and getenv('STT_S7_SIDE_WORKER','0')=='1'))
 
 def admin_job(r):
     data = {k:r[k] for k in ('id','title','status','outcome','created','started','finished','expires','heartbeat',
@@ -1015,7 +1016,7 @@ app.mount('/', StaticFiles(directory=ROOT/'web',html=True),name='web')
     info: dict = Field(default_factory=dict)
 
 def s7_eligible(item):
-    return (item['source']=='upload' and 0 < item['input_bytes'] <= 8*1024**2
+    return (item['source']=='upload' and 0 < (item['input_bytes'] or 0) <= 8*1024**2
             and Path(item['title'] or '').suffix.lower() in ('.wav','.mp3'))
 
 @app.post('/api/worker/claim', dependencies=[Depends(worker)])
