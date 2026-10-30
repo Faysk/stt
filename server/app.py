@@ -440,6 +440,8 @@ def admin_job(r):
         'client_tag','network_tag','ui_language','priority','stage','attempts','worker','model','device','compute',
         'duration','elapsed','cpu_seconds','peak_rss_mb','peak_vram_mb','input_bytes','language','error','model_revision','runtime','engine','progress','timing','result_state','purged_at','purge_attempts','purge_retry_at','purge_error')}
     data['metrics'] = json.loads(r['metrics_json']) if r['metrics_json'] else None
+    data['queue_seconds'] = max(0,r['started']-r['created']) if r['started'] is not None else None
+    data['job_total_seconds'] = max(0,r['finished']-r['created']) if r['finished'] is not None else None
     return data
 
 @app.get('/api/admin/history',dependencies=[Depends(admin)])
@@ -607,6 +609,8 @@ class Result(BaseModel):
     def chronology(self):
         if self.metrics is not None:
             validate_metrics(self.metrics)
+            if abs(self.metrics['engine_elapsed_s']-self.elapsed)>0.5:
+                raise ValueError('Tempo total e métricas de motor inconsistentes.')
         if self.timing == 'none' and self.segments:
             raise ValueError('Untimed text cannot contain timed segments.')
         if self.error and self.segments:
