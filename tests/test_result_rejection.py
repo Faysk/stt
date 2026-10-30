@@ -143,11 +143,11 @@ def test_worker_retries_rejection_notice_after_transient_failure(tmp_path, monke
     monkeypatch.setattr(worker, 'client', Client())
     job = {'id':'e' * 32,'lease':'synthetic-lease','expires':time.time()+3600}
     path = worker._save_outbox(job, {'segments':[],'duration':0})
-    assert worker._deliver(path) == 'pending'
+    assert worker._deliver(path) == 'quarantined'
     record = json.loads(path.read_text(encoding='utf-8'))
     assert record['dead_letter_status'] == 422
     assert not record.get('rejection_notified')
-    assert worker._deliver(path,now=record['retry_at']-0.1) == 'pending'
+    assert worker._deliver(path,now=record['retry_at']-0.1) == 'quarantined'
     assert worker._deliver(path,now=record['retry_at']+0.1) == 'quarantined'
     assert json.loads(path.read_text(encoding='utf-8'))['rejection_notified']
     assert len(endpoints) == 3
