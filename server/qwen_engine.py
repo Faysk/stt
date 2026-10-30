@@ -166,7 +166,7 @@ def run(config):
         _progress(folder,'loading',0)
         t=time.perf_counter()
         processor=AutoProcessor.from_pretrained(str(model_path),local_files_only=True)  # nosec B615: verified local directory; no remote downloads
-        model=AutoModelForMultimodalLM.from_pretrained(
+        model=AutoModelForMultimodalLM.from_pretrained(  # nosec B615: fixed local model path; no remote downloads
             str(model_path),dtype=dtype,device_map={'':'cuda:0'},local_files_only=True)
         device_map=getattr(model,'hf_device_map',{})
         if not str(model.device).startswith('cuda') or (
