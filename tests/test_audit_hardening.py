@@ -222,11 +222,11 @@ def test_qwen_incremental_audio_and_network_budgets(monkeypatch):
             return [frame] if frame is not None else []
 
     class AV:
-        AudioResampler = AudioResampler
-
         @staticmethod
         def open(*args):
             return Source()
+
+    AV.AudioResampler = AudioResampler
 
     windows = qwen.iter_windows('synthetic.wav', AV, np, seconds=2)
     start, first = next(windows)
