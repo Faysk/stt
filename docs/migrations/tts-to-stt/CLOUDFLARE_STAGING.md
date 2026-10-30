@@ -16,7 +16,18 @@
 1. Confirm DNS & Worker Custom Domain conflicts, Cloudflare zone ownership, access restrictions, origin auth and `EDGE_KEY` binding (presence only).
 2. Use `npx wrangler deploy --config wrangler.stt.jsonc --dry-run` as an offline build validation. A dry-run cannot confirm the origin or SSL.
 3. Provision new Worker via authorized Cloudflare administration, set `EDGE_KEY` privately and confirm its presence using `wrangler secret list --config wrangler.stt.jsonc`. **Warning:** `wrangler secret put` itself deploys a version; provision this new Worker in a controlled window and never target the legacy Worker.
-4. Inspect `npx wrangler deploy --config wrangler.stt.jsonc` output and verify target is `faysk-stt`/`stt.faysk.dev` before approving release. This is **not run by any CI**.
+4. **Depois** de GO documentado, use o comando protegido da release (PowerShell), cujo script também valida o target antes de invocar Wrangler:
+
+   ```powershell
+   $env:STT_APPROVED_CUTOVER = 'stt.faysk.dev'
+   $env:STT_APPROVED_WORKER = 'faysk-stt'
+   npm run deploy
+   Remove-Item Env:STT_APPROVED_CUTOVER, Env:STT_APPROVED_WORKER
+   ```
+
+   Sem essas aprovações, `npm run deploy` termina sem contactar o provedor. Não contorne a proteção usando diretamente `wrangler deploy` por hábito. Antes, faça `npm run deploy:stt:dry-run` (apenas compilação sem mutação).
+
+   A ação real pode alterar o Worker novo e **não é executada pelo CI**. Exige operador com acesso legítimo e secret `EDGE_KEY` provisionado de forma privada.
 5. Probe `https://stt.faysk.dev/api/health`, denied unauthorized direct origin, upload/status/download and TLS. Check `tts.faysk.dev` before/after to ensure existing sessions still work.
 6. Run the two-host browser tests #28, plus #19 rollback/restore. **Do not put a blanket redirect on GET/POST /api/**, and do not move `localStorage` secrets across origins.
 7. With explicit GO, keep legacy host available through the full 24h retention interval **plus operational margin** before any optional navigation redirects.
