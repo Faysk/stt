@@ -33,8 +33,9 @@ def test_s7_scoped_key_and_opt_in(tmp_path,monkeypatch):
         assert c.post("/api/worker/model-preloads/claim",headers=S7,
                       json={"worker":"s7-edge"}).json()["operation"] is None
         requested=dict(worker="s7-edge",model="tiny",device="cpu",compute="float32",paused=False)
-        assert c.put("/api/admin/settings",headers=ADMIN,json=requested).status_code==200
+        assert c.put("/api/admin/settings",headers=ADMIN,json=requested).status_code==409
         monkeypatch.setenv("STT_S7_ENABLED","1")
+        assert c.put("/api/admin/settings",headers=ADMIN,json=requested).status_code==200
         # S7 must not advertise a model that does not actually exist.
         assert c.post("/api/worker/claim",headers=S7,
                       json={"id":"s7-edge","info":{**CAPS,"models":[]}}).json()["job"] is None
@@ -66,6 +67,7 @@ def test_s7_only_claims_small_audio_uploads(tmp_path,monkeypatch):
         assert claimed.status_code==200
         job=claimed.json()["job"]
         assert job["id"]=="voice-wav"
+        assert job["input_type"]=="wav"
         assert c.post("/api/worker/video/heartbeat",headers=S7,
                       json={"lease":job["lease"]}).status_code==409
         ok=c.post("/api/worker/voice-wav/heartbeat",headers=S7,
