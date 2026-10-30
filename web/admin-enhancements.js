@@ -55,6 +55,9 @@
     if (dashboardData) renderSettings(dashboardData);
   }
   function stateOf(model) {
+    const worker = dashboardData?.workers.find(w => w.id === $('worker').value);
+    if (!worker || dashboardData.now - worker.seen >= 90)
+      return {label:workerCache(model) ? 'Cache relatado · offline' : 'Executor offline', cls:'neutral'};
     if (workerCache(model)) return {label:'No cache do executor', cls:'good'};
     const p = matchingPreload(model);
     if (p && (p.status === 'pending' || p.status === 'running')) {
@@ -62,9 +65,6 @@
     }
     if (p?.status === 'ready') return {label:'Preparado em disco', cls:'good'};
     if (p?.status === 'failed') return {label:'Falha no preparo', cls:'bad'};
-    const worker = dashboardData?.workers.find(w => w.id === $('worker').value);
-    if (!worker || dashboardData.now - worker.seen >= 90)
-      return {label:'Executor offline', cls:'neutral'};
     return {label:'Sob demanda', cls:'neutral'};
   }
   async function requestPreload(model) {
@@ -99,6 +99,12 @@
           ? 'Solicitando...' : state.label;
         tag.className = 'badge ' + (pendingPreloads.has($('worker').value + ':' + model) ? 'working' : state.cls);
       }
+      const revision = (workerInfo().models || []).find(m => m.id === model)?.revision ||
+        matchingPreload(model)?.revision;
+      const code = card.querySelectorAll('code')[1];
+      if (code) code.textContent = revision
+        ? 'Revisão no executor: ' + revision
+        : 'Revisão ainda não confirmada neste executor';
       card.dataset.model = model;
       const isSelected = model === selected;
       const isActive = model === dashboardData.settings.model && $('worker').value === dashboardData.settings.worker;
