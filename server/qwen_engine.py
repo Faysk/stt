@@ -16,6 +16,7 @@ import time
 from pathlib import Path
 
 from server.metrics import make_metrics
+from server.config import getenv
 
 RECIPES = {
     'qwen-fast': dict(repository='Qwen/Qwen3-ASR-0.6B-hf',
@@ -37,7 +38,7 @@ class EngineError(RuntimeError):
 def model_directory(model, root=None):
     recipe=RECIPES.get(model)
     if not recipe: raise EngineError('QWEN_RECIPE_UNKNOWN')
-    root=Path(root or os.getenv('TTS_QWEN_MODELS','models/qwen')).resolve()
+    root=Path(root or getenv('TTS_QWEN_MODELS','models/qwen')).resolve()
     path=(root/recipe['directory']).resolve()
     if root not in path.parents:
         raise EngineError('QWEN_MODEL_PATH_INVALID')
