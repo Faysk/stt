@@ -117,3 +117,29 @@ def test_early_api_denials_have_privacy_security_headers(tmp_path,monkeypatch):
             assert res.headers['referrer-policy']=='no-referrer'
             assert res.headers['x-robots-tag']=='noindex, nofollow, noarchive'
             assert "default-src 'self'" in res.headers['content-security-policy']
+
+
+def test_streamed_body_without_content_length_returns_413(tmp_path,monkeypatch):
+    """Transfer-Encoding: chunked cannot bypass the streaming upload budget."""
+    monkeypatch.setenv('TTS_DATA',str(tmp_path))
+    monkeypatch.setenv('TTS_ADMIN_KEY','test-admin')
+    monkeypatch.setenv('TTS_WORKER_KEY','test-worker')
+    monkeypatch.setenv('TTS_REQUIRE_EDGE','0')
+    for suffix in ('DATA','ADMIN_KEY','WORKER_KEY','REQUIRE_EDGE'):
+        monkeypatch.delenv('STT_'+suffix,raising=False)
+    with patch('dotenv.load_dotenv',lambda *a,**kw:None):
+        import server.app as module
+        module=importlib.reload(module)
+        monkeypatch.setattr(module,'MAX_BYTES',64)
+
+        def chunks():
+            yield b'0'*128
+            yield b'1'*128
+
+        with TestClient(module.app,raise_server_exceptions=False) as client:
+            r=client.post('/api/jobs/upload',headers={'x-session-key':'a'*64},
+                          content=chunks())
+        # Exact file format is intentionally invalid. The ASGI byte budget
+        # must still terminate oversized streams before route validation.
+        assert r.status_code==413,r.text
+        assert r.headers['cache-control']=='no-store'
