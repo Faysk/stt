@@ -126,9 +126,15 @@ def _drain_outbox():
             status = _deliver(path)
             if status == 'pending': pending = True
         except (ValueError,OSError,KeyError,TypeError) as exc:
-            # Corrupt records require intervention, but must not permanently
-            # prevent unrelated jobs from being claimed. Never discard a payload.
+            # Unreadable JSON cannot yield its original expires timestamp.
+            # Keep it for at least a complete 24-hour retention cycle, then
+            # purge securely rather than retaining transcripts indefinitely.
             print(f'Outbox {path.name}: quarantine inspection needed ({type(exc).__name__})',flush=True)
+            try:
+                if time.time() - path.stat().st_mtime > 86400:
+                    path.unlink(missing_ok=True)
+            except OSError:
+                pass
     return pending
 
 def _stop_child(proc):
