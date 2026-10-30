@@ -844,6 +844,134 @@ def heartbeat(jid: str, h: Heartbeat):
         c.execute('UPDATE workers SET seen=? WHERE id=?',(now,r['worker']))
     return {'ok':True}
 
+class ResultRejection(BaseModel):
+    """Restricted worker-only signal: invalid result was rejected by the API.
+
+    The lease is mandatory; only this known reason is accepted. No private
+    transcript or arbitrary error text is permitted in the notice.
+    """
+    lease: str = Field(min_length=1, max_length=128)
+    reason: str = Field(pattern=r'^result_schema_rejected    start: float = Field(ge=0,le=7200,allow_inf_nan=False)
+    end: float = Field(ge=0,le=7200,allow_inf_nan=False)
+    text: str = Field(max_length=10000)
+
+class Result(BaseModel):
+    lease: str
+    segments: list[Segment] = Field(default_factory=list,max_length=30000)
+    language: str = Field(default='',max_length=20)
+    duration: float = Field(default=0,ge=0,le=7200,allow_inf_nan=False)
+    elapsed: float = Field(default=0,ge=0,allow_inf_nan=False)
+    cpu_seconds: float = Field(default=0,ge=0,allow_inf_nan=False)
+    peak_rss_mb: float = Field(default=0,ge=0,allow_inf_nan=False)
+    peak_vram_mb: float = Field(default=0,ge=0,allow_inf_nan=False)
+    input_bytes: int = Field(default=0,ge=0)
+    error: str | None = Field(default=None,max_length=500)
+    runtime: dict = Field(default_factory=dict)
+    model_revision: str | None = Field(default=None,max_length=80)
+    title: str | None = Field(default=None,max_length=180)
+    result_state: str = Field(default='unknown',pattern='^(unknown|complete|silence|partial)$')
+    metrics: dict | None = None
+    text: str | None = Field(default=None,max_length=500000)
+    timing: str = Field(default='segments',pattern='^(segments|none)$')
+
+    @model_validator(mode='after')
+    def chronology(self):
+        if self.metrics is not None:
+            validate_metrics(self.metrics)
+            if abs(self.metrics['engine_elapsed_s']-self.elapsed)>0.5:
+                raise ValueError('Tempo total e métricas de motor inconsistentes.')
+        if self.timing == 'none' and self.segments:
+            raise ValueError('Untimed text cannot contain timed segments.')
+        if self.error and self.segments:
+            raise ValueError('Erro não pode conter segmentos publicados.')
+        previous = -1.0
+        for segment in self.segments:
+            if segment.end < segment.start:
+                raise ValueError('Segmento com intervalo invertido.')
+            if segment.start + 1e-6 < previous:
+                raise ValueError('Segmentos fora da ordem cronológica.')
+            if self.duration == 0 or segment.end > self.duration + 0.5:
+                raise ValueError('Segmento além da duração declarada.')
+            previous = segment.start  # legitimate overlapping speech is preserved
+        if self.result_state == 'silence' and self.segments:
+            raise ValueError('Silêncio não pode conter segmentos.')
+        if self.result_state in ('complete','partial') and not self.segments and not (self.text or '').strip() and not self.error:
+            raise ValueError('Resultado vazio exige estado silêncio ou desconhecido.')
+        return self
+
+def timestamp(n):
+    ms = int(n*1000)
+    return f'{ms//3600000:02}:{ms//60000%60:02}:{ms//1000%60:02},{ms%1000:03}'
+
+@app.post('/api/worker/{jid}/result', dependencies=[Depends(worker)])
+def result(jid: str, result: Result):
+    canonical = json.dumps(result.model_dump(),sort_keys=True,ensure_ascii=False,separators=(',',':'),allow_nan=False)
+    receipt = hashlib.sha256(canonical.encode('utf-8')).hexdigest()
+    lease_hash = hashlib.sha256(result.lease.encode()).hexdigest()
+    with db() as c:
+        c.execute('BEGIN IMMEDIATE')
+        previous = c.execute('SELECT status,expires,receipt_hash,receipt_lease FROM jobs WHERE id=?',(jid,)).fetchone()
+        if previous and previous['expires']>time.time() and previous['status'] in ('done','failed'):
+            if previous['receipt_hash']==receipt and previous['receipt_lease']==lease_hash:
+                return {'ok':True,'receipt':receipt,'duplicate':True}
+            raise HTTPException(409,'Tentativa concluída com resultado diferente.')
+        r = leased(c,jid,result.lease)
+        if not result.error:
+            folder = BLOB / jid
+            folder.mkdir(exist_ok=True)
+            text = result.text.strip() if result.text is not None else '\n'.join(s.text.strip() for s in result.segments)
+            exports = {
+                'txt': text,
+                'md': '# Transcrição\n\n' + text,
+                **({'srt': '\n\n'.join(f'{i}\n{timestamp(s.start)} --> {timestamp(s.end)}\n{s.text.strip()}' for i,s in enumerate(result.segments,1))} if result.timing=='segments' else {}),
+                'json': json.dumps(dict(schema_version=1,result_state=result.result_state,timing=result.timing,language=result.language,duration=result.duration,
+                                        model=r['model'],text=text if result.timing=='none' else None,segments=[s.model_dump() for s in result.segments]),ensure_ascii=False)
+            }
+            _publish_generation(folder,receipt,exports)
+        state = 'failed' if result.error else 'done'
+        outcome = 'failed' if result.error else ('partial' if result.result_state=='partial' else 'done')
+        c.execute("""UPDATE jobs SET status=?,finished=?,duration=?,elapsed=?,cpu_seconds=?,peak_rss_mb=?,
+                   peak_vram_mb=?,language=?,error=?,progress=?,lease=NULL,input_bytes=max(input_bytes,?),
+                   receipt_hash=?,receipt_lease=?,result_state=?,timing=?,artifact_layout=? WHERE id=? AND lease=? AND status='running'""",
+                  (state,time.time(),result.duration,result.elapsed,result.cpu_seconds,result.peak_rss_mb,
+                   result.peak_vram_mb,result.language,result.error,0 if result.error else 100,result.input_bytes,
+                   receipt,lease_hash,result.result_state,result.timing,
+                    'generations-v1' if not result.error else None,jid,result.lease))
+        runtime=json.dumps(result.runtime)
+        if len(runtime)>8000: runtime=json.dumps({'metadata_error':'oversized_runtime'})
+        c.execute('UPDATE jobs SET outcome=?,stage=?,runtime=?,model_revision=?,metrics_json=? WHERE id=?',
+                  (outcome,state,runtime,result.model_revision,json.dumps(result.metrics) if result.metrics is not None else None,jid))
+        if result.title and r['source']!='upload': c.execute('UPDATE jobs SET title=? WHERE id=?',(result.title,jid))
+        obs.event(c,jid,outcome,r['worker'],{'elapsed':result.elapsed})
+    return {'ok':True,'receipt':receipt,'duplicate':False}
+
+app.mount('/', StaticFiles(directory=ROOT/'web',html=True),name='web')
+)
+
+
+@app.post('/api/worker/{jid}/reject', dependencies=[Depends(worker)])
+def reject_invalid_result(jid: str, notice: ResultRejection):
+    """Terminate an invalid result explicitly rather than waiting for timeout.
+
+    API result validation remains strict. Only the current, unexpired lease
+    can end its own running job. No result artifacts are published here.
+    """
+    now = time.time()
+    with db() as c:
+        c.execute('BEGIN IMMEDIATE')
+        r = leased(c, jid, notice.lease)
+        changed = c.execute("""UPDATE jobs SET status='failed',outcome='failed',
+                               stage='failed',finished=?,error=?,progress=0,
+                               lease=NULL
+                               WHERE id=? AND lease=? AND status='running'
+                               AND expires>?""",
+                            (now,'Resultado do executor inválido; entrega rejeitada pela API.',jid,notice.lease,now))
+        if changed.rowcount != 1:
+            raise HTTPException(409,'Lease expirado.')
+        obs.event(c,jid,'failed',r['worker'],{'reason':'result_schema_rejected'})
+    return {'ok':True}
+
+
 class Segment(BaseModel):
     start: float = Field(ge=0,le=7200,allow_inf_nan=False)
     end: float = Field(ge=0,le=7200,allow_inf_nan=False)
