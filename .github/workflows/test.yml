@@ -13,3 +13,4 @@ jobs:
           node-version: '22'
       - run: npm run check
       - run: node tests/i18n.test.cjs
+      - run: node tests/edge.test.cjs

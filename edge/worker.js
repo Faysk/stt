@@ -2,7 +2,13 @@
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
-    if (!url.pathname.startsWith('/api/')) return env.ASSETS.fetch(request);
+    if (!url.pathname.startsWith('/api/')) {
+      if (url.pathname === '/') {
+        const index = new URL('/index.html',url);
+        return env.ASSETS.fetch(new Request(index,request));
+      }
+      return env.ASSETS.fetch(request);
+    }
     if (!env.ORIGIN || !env.EDGE_KEY) return Response.json({detail:'Executor ainda não configurado.'}, {status:503});
     const headers = new Headers(request.headers);
     headers.set('x-edge-key', env.EDGE_KEY);
