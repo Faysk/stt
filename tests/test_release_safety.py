@@ -132,12 +132,18 @@ def test_streamed_body_without_content_length_returns_413(tmp_path,monkeypatch):
         module=importlib.reload(module)
         monkeypatch.setattr(module,'MAX_BYTES',64)
 
+        boundary='----stt-audit-fixture'
         def chunks():
+            yield (f'--{boundary}\\r\\n'
+                   'Content-Disposition: form-data; name="file"; filename="fixture.wav"\\r\\n'
+                   'Content-Type: audio/wav\\r\\n\\r\\n').encode('ascii')
             yield b'0'*(1024*1024+128)
-            yield b'1'*128
+            yield (f'\\r\\n--{boundary}--\\r\\n').encode('ascii')
 
         with TestClient(module.app,raise_server_exceptions=False) as client:
-            r=client.post('/api/jobs/upload',headers={'x-session-key':'a'*64},
+            r=client.post('/api/jobs/upload',headers={
+                            'x-session-key':'a'*64,
+                            'content-type':f'multipart/form-data; boundary={boundary}'},
                           content=chunks())
         # Exact file format is intentionally invalid. The ASGI byte budget
         # must still terminate oversized streams before route validation.
