@@ -1,7 +1,7 @@
 # Motores, resultados e benchmarks (preview de 30/10/2026)
 
 Este documento descreve a **branch experimental**, não o estado atualmente
-publicado em `tts.faysk.dev`. Não executar instalação nem copiar pesos para o
+publicado em `stt.faysk.dev`. Não executar instalação nem copiar pesos para o
 ambiente `faster-whisper` existente. O código Qwen está atrás de uma seleção
 **manual** de motor e do anúncio de capacidade do worker.
 
