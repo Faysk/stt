@@ -1,14 +1,9 @@
 const $=id=>document.getElementById(id);
-const legacyNotice=$('legacy-access');
-if(legacyNotice && location.hostname==='stt.faysk.dev')legacyNotice.hidden=false;
 function el(tag,cls,text){const e=document.createElement(tag);if(cls)e.className=cls;if(text!==undefined)e.textContent=text;return e}
 const validSession=value=>/^[a-f0-9]{64}$/.test(value||'');
 let key;
 try{
- const modern=localStorage.getItem('stt.session');
- const legacy=localStorage.getItem('tts.session');
- key=validSession(modern)?modern:validSession(legacy)?legacy:undefined;
- if(key)localStorage.setItem('stt.session',key);
+ key=localStorage.getItem('stt.session');
 }catch{}
 if(!validSession(key)){key=Array.from(crypto.getRandomValues(new Uint8Array(32)),b=>b.toString(16).padStart(2,'0')).join('');try{localStorage.setItem('stt.session',key)}catch{}}
 let mode='file',selected=null,busy=false,polling=false,jobs=[],health=null,filter='all',renderSignature='',currentTranscript='',readerData=null,readerMode='timeline';
