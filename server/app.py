@@ -71,7 +71,7 @@ def init():
             'priority':'INTEGER DEFAULT 0','outcome':'TEXT','runtime':'TEXT',
             'model_revision':'TEXT','stage':"TEXT DEFAULT 'queued'",
             'purged_at':'REAL','purge_retry_at':'REAL DEFAULT 0','purge_attempts':'INTEGER DEFAULT 0',
-            'purge_error':'TEXT','receipt_hash':'TEXT','receipt_lease':'TEXT','result_state':'TEXT','metrics_json':'TEXT','engine':'TEXT','timing':"TEXT DEFAULT 'segments'"}.items():
+            'purge_error':'TEXT','receipt_hash':'TEXT','receipt_lease':'TEXT','result_state':'TEXT','metrics_json':'TEXT','engine':'TEXT','timing':"TEXT DEFAULT 'segments'",'artifact_layout':'TEXT'}.items():
             if name not in columns: c.execute(f'ALTER TABLE jobs ADD COLUMN {name} {definition}')
         c.execute("UPDATE jobs SET outcome=status WHERE outcome IS NULL AND status IN ('done','failed','cancelled')")
         c.execute("UPDATE jobs SET stage=status WHERE stage='queued' AND status IN ('done','failed','expired','cancelled')")
@@ -398,12 +398,67 @@ def youtube(link: Link, request: Request, own=Depends(owner)):
     (BLOB / jid).mkdir()
     return {'id':jid}
 
+def artifact_path(row, fmt):
+    """Committed generation only; old rows retain the pre-upgrade flat layout."""
+    if row['artifact_layout'] == 'generations-v1':
+        digest = row['receipt_hash']
+        if not digest or len(digest) != 64 or any(c not in '0123456789abcdef' for c in digest):
+            raise HTTPException(503, 'Manifesto do resultado indisponível.')
+        return BLOB / row['id'] / 'results' / digest / ('transcript.' + fmt)
+    return BLOB / row['id'] / ('transcript.' + fmt)
+
+
+def _fsync_directory(path):
+    """POSIX directory durability; on Windows use per-file fsync and atomic rename."""
+    if os.name == 'nt':
+        return
+    fd = os.open(path, os.O_RDONLY | getattr(os, 'O_DIRECTORY', 0))
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+
+
+def _publish_generation(folder, receipt, exports):
+    """Stage a complete immutable generation, expose only via committed SQLite.
+
+    Orphaned generations remain invisible after a SQL rollback and may be
+    reused only when all files match the same canonical receipt.
+    """
+    root = folder / 'results'
+    root.mkdir(exist_ok=True)
+    target = root / receipt
+    if target.exists():
+        if target.is_symlink() or not target.is_dir():
+            raise OSError('Invalid result generation')
+        existing = {p.name for p in target.iterdir()}
+        expected = {'transcript.' + name for name in exports}
+        if existing != expected or any((target / ('transcript.' + fmt)).read_text(encoding='utf-8') != content
+                                       for fmt, content in exports.items()):
+            raise OSError('Result generation content mismatch')
+        return
+    staging = root / ('.stage-' + secrets.token_hex(16))
+    staging.mkdir()
+    try:
+        for fmt, content in exports.items():
+            with (staging / ('transcript.' + fmt)).open('w', encoding='utf-8') as stream:
+                stream.write(content)
+                stream.flush()
+                os.fsync(stream.fileno())
+        _fsync_directory(staging)
+        staging.replace(target)
+        _fsync_directory(root)
+    finally:
+        if staging.exists():
+            shutil.rmtree(staging)
+
+
 @app.get('/api/jobs/{jid}/download/{fmt}')
 def download(jid: str, fmt: str, own=Depends(owner)):
     r = owned(jid,own)
-    if fmt not in ('txt','md','srt','json') or r['status'] != 'done':
+    if fmt not in ('txt','md','srt','json') or r['status'] != 'done' or (fmt=='srt' and r['timing']=='none'):
         raise HTTPException(404, 'Resultado indisponível.')
-    path = BLOB / jid / ('transcript.'+fmt)
+    path = artifact_path(r,fmt)
     if not path.is_file(): raise HTTPException(404, 'Formato indisponível para este motor.')
     return FileResponse(path, filename='transcricao.'+fmt, media_type='application/json' if fmt=='json' else 'text/plain; charset=utf-8')
 
@@ -412,7 +467,11 @@ def job(jid: str, own=Depends(owner)):
     r = owned(jid,own)
     result = public(r)
     if r['status']=='done':
-        result['text'] = (BLOB / jid / 'transcript.txt').read_text(encoding='utf-8')
+        path=artifact_path(r,'txt')
+        try:
+            result['text'] = path.read_text(encoding='utf-8')
+        except OSError:
+            raise HTTPException(503, 'Resultado temporariamente indisponível.')
     return result
 
 class Settings(BaseModel):
@@ -658,18 +717,16 @@ def result(jid: str, result: Result):
                 'json': json.dumps(dict(schema_version=1,result_state=result.result_state,timing=result.timing,language=result.language,duration=result.duration,
                                         model=r['model'],text=text if result.timing=='none' else None,segments=[s.model_dump() for s in result.segments]),ensure_ascii=False)
             }
-            for fmt, content in exports.items():
-                tmp = folder / ('transcript.' + fmt + '.tmp')
-                tmp.write_text(content,encoding='utf-8')
-                tmp.replace(folder / ('transcript.' + fmt))
+            _publish_generation(folder,receipt,exports)
         state = 'failed' if result.error else 'done'
         outcome = 'failed' if result.error else ('partial' if result.result_state=='partial' else 'done')
         c.execute("""UPDATE jobs SET status=?,finished=?,duration=?,elapsed=?,cpu_seconds=?,peak_rss_mb=?,
                    peak_vram_mb=?,language=?,error=?,progress=?,lease=NULL,input_bytes=max(input_bytes,?),
-                   receipt_hash=?,receipt_lease=?,result_state=?,timing=? WHERE id=? AND lease=? AND status='running'""",
+                   receipt_hash=?,receipt_lease=?,result_state=?,timing=?,artifact_layout=? WHERE id=? AND lease=? AND status='running'""",
                   (state,time.time(),result.duration,result.elapsed,result.cpu_seconds,result.peak_rss_mb,
                    result.peak_vram_mb,result.language,result.error,0 if result.error else 100,result.input_bytes,
-                   receipt,lease_hash,result.result_state,result.timing,jid,result.lease))
+                   receipt,lease_hash,result.result_state,result.timing,
+                    'generations-v1' if not result.error else None,jid,result.lease))
         runtime=json.dumps(result.runtime)
         if len(runtime)>8000: runtime=json.dumps({'metadata_error':'oversized_runtime'})
         c.execute('UPDATE jobs SET outcome=?,stage=?,runtime=?,model_revision=?,metrics_json=? WHERE id=?',
