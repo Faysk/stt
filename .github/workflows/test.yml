@@ -36,6 +36,12 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
+      - name: Run real Python suite on Windows (no GPU, isolated fixtures)
+        shell: pwsh
+        run: |
+          uv sync --locked --group dev
+          uv run pytest -q
       - name: Parse operational PowerShell scripts
         shell: pwsh
         run: |
