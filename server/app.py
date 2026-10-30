@@ -339,18 +339,57 @@ def new_job(c, own, title, source, request=None):
     return jid
 
 class BodyLimit:
-    def __init__(self, app): self.app=app
-    async def __call__(self,scope,receive,send):
-        if scope['type']!='http': return await self.app(scope,receive,send)
-        size=0
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope['type'] != 'http':
+            return await self.app(scope, receive, send)
+        size = 0
+        exceeded = False
+        responded = False
+        started = False
+
         async def limited():
-            nonlocal size
-            message=await receive()
-            size+=len(message.get('body',b''))
-            if size>MAX_BYTES+1024*1024:
-                raise HTTPException(413,'Limite de 90 MB por arquivo.')
+            nonlocal size, exceeded
+            if exceeded:
+                return {'type':'http.request', 'body':b'', 'more_body':False}
+            message = await receive()
+            if message['type'] != 'http.request':
+                return message
+            size += len(message.get('body', b''))
+            if size > MAX_BYTES + 1024*1024:
+                # The multipart parser may turn exceptions raised by receive()
+                # into HTTP 400. Send an explicit 413 instead, while ensuring
+                # no further bytes are passed to the application.
+                exceeded = True
+                return {'type':'http.request', 'body':b'', 'more_body':False}
             return message
-        await self.app(scope,limited,send)
+
+        async def reject():
+            response = secure_api_response(
+                JSONResponse({'detail':'Limite de 90 MB por arquivo.'}, status_code=413),
+                scope.get('path',''))
+            await response(scope, receive, send)
+
+        async def limited_send(message):
+            nonlocal responded, started
+            if exceeded:
+                if not responded and not started:
+                    responded = True
+                    await reject()
+                return
+            if message['type'] == 'http.response.start':
+                started = True
+            await send(message)
+
+        try:
+            await self.app(scope, limited, limited_send)
+        except Exception:
+            if exceeded and not started and not responded:
+                await reject()
+                return
+            raise
 
 app.add_middleware(BodyLimit)
 
