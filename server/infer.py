@@ -66,7 +66,10 @@ def run(config):
             with yt_dlp.YoutubeDL({'js_runtimes':{'node':{}},'format':'bestaudio/best','noplaylist':True,'outtmpl':str(media),'max_filesize':90*1024**2,'socket_timeout':30,'retries':2,'quiet':True,'progress_hooks':[limit],'match_filter':lambda info,**kw: 'Duração máxima: 2 horas.' if (info.get('duration') or 0)>7200 or info.get('is_live') else None}) as ydl:
                 media_info=ydl.extract_info(job['source'],download=True)
                 if media_info: media_title=(media_info.get('title') or 'YouTube')[:180]
-        finish_stage('download_s')
+        if job['source']!='upload':
+            finish_stage('download_s')
+        else:
+            stage_started=time.perf_counter()  # Transport happened in the worker.
         # PyAV decodes independently of the uploaded filename, with a duration cap.
         import av
         with av.open(str(media)) as container:
