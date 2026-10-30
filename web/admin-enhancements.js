@@ -159,10 +159,13 @@
       const w = workers[index], info = w.info || {}, online = dashboardData.now - w.seen < 90;
       if (!w) return;
       const gpu = info.gpu?.name || 'GPU não detectada';
+      const ram = info.ram_total_mb ? (info.ram_total_mb / 1024).toFixed(1) + ' GB RAM' : 'RAM não informada';
       const types = info.compute_types || {};
       const details = node('div','', 'worker-features');
       details.append(node('span','CPU · ' + (info.cpu || 'n/d') + ' threads','feature-pill'),
+        node('span',ram,'feature-pill'),
         node('span',gpu,'feature-pill'),
+        node('span',info.gpu ? info.gpu.vram_mb + ' MB VRAM total · ' + info.gpu.free_vram_mb + ' MB livres (snapshot)' : 'CUDA não detectada','feature-pill'),
         node('span',(info.models || []).length + ' modelos em cache','feature-pill'),
         node('span','CPU: ' + (types.cpu || []).join(', ') + ' / CUDA: ' + (types.cuda || []).join(', '),'feature-pill'));
       card.append(details);
@@ -188,7 +191,7 @@
     const gpuReady = Boolean(info.gpu && (info.compute_types?.cuda || []).length);
     const devices = [
       {id:'cpu',title:'CPU',details:'Compatibilidade e menor uso de VRAM',meta:(info.cpu || 'n/d') + ' threads lógicas',allowed:true},
-      {id:'cuda',title:'GPU · CUDA',details:'Aceleração em hardware NVIDIA',meta:info.gpu?.name || 'CUDA não confirmada neste executor',allowed:gpuReady}
+      {id:'cuda',title:'GPU · CUDA',details:'Aceleração em hardware NVIDIA',meta:info.gpu ? info.gpu.name + ' · ' + info.gpu.vram_mb + ' MB VRAM' : 'CUDA não confirmada neste executor',allowed:gpuReady}
     ];
     for (const d of devices) {
       const b = node('button','', 'choice-card');
