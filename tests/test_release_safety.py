@@ -214,3 +214,22 @@ def test_real_api_result_can_be_restored_for_offline_legacy_rollback(tmp_path,mo
         with TestClient(module.app) as client:
             assert client.get(f'/api/jobs/{jid}/download/txt',headers=session).text=='integration fixture'
             assert client.get(f'/api/jobs/{jid}/download/srt',headers=session).status_code==200
+
+
+def test_outbox_atomic_rename_fsyncs_directory_on_posix(tmp_path,monkeypatch):
+    """A successful payload must survive crash between rename and directory flush."""
+    import os
+    import stat
+    if os.name=='nt':
+        pytest.skip('Directory fsync is unavailable on Windows')
+    w=worker(tmp_path,monkeypatch)
+    actual_fsync=os.fsync
+    flushed=[]
+    def observe(fd):
+        flushed.append('dir' if stat.S_ISDIR(os.fstat(fd).st_mode) else 'file')
+        return actual_fsync(fd)
+    monkeypatch.setattr(w.os,'fsync',observe)
+    path=w.OUTBOX/'durable.json'
+    w._atomic_json(path,{'payload':'synthetic-transcript'})
+    assert json.loads(path.read_text(encoding='utf-8'))['payload']=='synthetic-transcript'
+    assert flushed==['file','dir']
