@@ -1,6 +1,6 @@
 # Administração interativa — contrato e validação
 
-Esta documentação descreve a branch de revisão do épico #57, não a versão publicada.
+**Estado (30/10/2026):** a implementação base do [PR #59](https://github.com/Faysk/stt/pull/59), commit `3358a88f226fba1d91319490c77cd05c3da49d67`, está integrada em `main`. **Não há prova de deploy dessa revisão no host Windows, nem homologação física do preload CPU/GPU ou do console.** Esta página descreve contrato implementado e testes ainda exigidos; ver [prontidão de release](RELEASE_READINESS.md).
 
 ## Semântica
 
@@ -29,4 +29,4 @@ Esta documentação descreve a branch de revisão do épico #57, não a versão 
 
 ## Pendências
 
-Progresso em bytes/percentual, cancelamento de preload, quota mínima de disco, validação de VRAM por processo em Windows e ensaios físicos na RTX 4070 permanecem a comprovar. Não publicar sem revisão e testes.
+Progresso em bytes/percentual, cancelamento de preload, quota mínima de disco, validação de VRAM por processo em Windows e ensaios físicos na RTX 4070 permanecem a comprovar. **Não declarar o painel homologado nem fazer deploy automático só porque o PR foi integrado.**

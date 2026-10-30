@@ -1,0 +1,57 @@
+# STT · prontidão de release, milestones e critérios de 100%
+
+**Baseline:** 30/10/2026. **Repositório:** [Faysk/stt](https://github.com/Faysk/stt). **Estado:** produção HTTP operacional no momento do teste, mas **release 100% ainda não homologado**. Este documento não autoriza deploy, restart, criação de credenciais, Terraform nem alterações na Cloudflare. Evidências de alterações reais só são aceites quando fornecidas pelo operador ou por um sistema com acesso autorizado.
+
+## Escopos diferentes — não somar percentagens
+
+1. **Retirada do TTS antigo (feito):** operador confirmou exclusões de Worker e Tunnel `faysk-tts`, `db/tts.sqlite3` e DNS `tts.faysk.dev`/`tts-origin.faysk.dev`; consulta DNS pública sem A/AAAA/CNAME antigos e com os novos nomes `stt.*` presentes. Teste PowerShell **após DNS**: frontend 200, API 200, origem direta sem segredo 403. Fonte: [IaC #52](https://github.com/Faysk/iac/issues/52) e [runbook](https://github.com/Faysk/iac/blob/main/docs/operations/STT_RETIRE_LEGACY_TTS.md).
+2. **STT público funcional (comprovado em um cenário):** YouTube público → job `done` → leitura → downloads confirmados pelo operador **antes** da retirada manual do DNS. Não há confirmação de uma **nova transcrição concluída depois** da limpeza.
+3. **Código do console administrativo (integrado, não homologado no host):** [PR #59](https://github.com/Faysk/stt/pull/59), commit `3358a88f226fba1d91319490c77cd05c3da49d67`, inclui seleção de modelo por card, preload assíncrono no worker, cards CPU/GPU e compute types, histórico e identidade GPU, interações e testes. **Git main ≠ deploy Windows/Worker**, e CI sintético ≠ GPU real.
+4. **Produção endurecida / 100% pronta (pendente):** persistência após logoff/reboot, recuperação de falhas, envio local e formatos, segurança de ingress/limites, outbox, validação de GPU/preload, retenção/restore, acessibilidade e monitorização conforme issues.
+5. **IaC global (escopo maior):** [Faysk/iac#20](https://github.com/Faysk/iac/issues/20) e [MAPPING_GATE](https://github.com/Faysk/iac/blob/main/docs/MAPPING_GATE.md) continuam **bloqueados** até 100% do ecossistema mapeado e aprovação explícita; conclusão de STT **não** autoriza `terraform import/apply`.
+
+## Milestones de release — plano de associação no GitHub
+
+**Atenção:** esta é a matriz documental dos milestones. Criar/editar milestones nativos exige acesso à funcionalidade de milestones do GitHub; **não presumir que já estejam criados/atribuídos**. Cada issue tem um marco *principal* nesta tabela; referências cruzadas não duplicam o denominador.
+
+| Marco proposto | Issues principais | Resultado exigido | Situação |
+|---|---|---|---|
+| **STT-M1 · Cutover e desativação TTS** | #11–#19, #28 (10) | Trajeto STT validado, remoção do legado documentada; reconciliar critérios históricos de sessão/rollback sem fabricar testes retroativos | Cutover/limpeza feitos, critérios históricos ainda por revisão |
+| **STT-M2 · Segurança, dados e disponibilidade** | #1–#6, #9, #20–#24, #35, #36, #38 (15) | Testes de falha, recebimentos/digest, limites, recuperação, retenção, serviços Windows e alertas comprovados | Pendente de aceite por issue |
+| **STT-M3 · Console admin, modelos e GPU** | #44–#57 (14) | PR #59 como base; UX, modelos, cache real por executor, comportamento CPU/GPU, CSV/histórico e teste no Windows com GPU aprovados | Código base integrado; produção não homologada |
+| **STT-M4 · E2E físico e release** | #37 (1) | Matriz real de uploads, YouTube pós-DNS, permissões, validação GPU, concorrência, privacidade, rollback operacional e aceite do operador | Pendente |
+| **STT-M5 · Pesquisa/benchmarks opcionais** | #7, #8 (2) | Qwen isolado, métricas/benchmarks auditáveis, ativação independente por decisão explícita | Pós-release; não bloquear produção Whisper somente por existir backlog opcional |
+
+**Total da baseline:** 42 issues abertas verificadas em 30/10/2026. As 42 foram mapeadas uma vez por número. **42 abertas não significam 0% implementado**; o status final vem dos critérios de aceite e das evidências, não de um percentual derivado de contagens de issues.
+
+## Portões de qualidade para declarar STT Whisper pronto
+
+| Gate | Evidência exigida | Estado em 30/10 |
+|---|---|---|
+| HTTP após limpeza | GET frontend/API = 200; origem sem segredo = 403 | **Passou 3/3**, saída PowerShell do operador |
+| Novo job após DNS | Gravação curta autorizada → done → TXT/SRT/JSON conferidos | **Pendente** |
+| Deploy/revisão instalada | SHA/versão da API, worker local e Worker Cloudflare; comparar com main | **Pendente** (não inferir a partir do Git) |
+| API/worker/Tunnel após boot | Autostart não interativo, watchdog, logs, restart controlado sem duplicar instâncias | **Pendente**, #35 |
+| Entrega durável | Receipt correto / divergente, retry, 409, outbox e nenhuma perda confirmada | **Pendente**, #3/#20/#21/#36 |
+| Envio e limites | WAV/MP3/MP4, arquivo inválido, limites 90 MB/2h, rate limit e retenção 24h | **Pendente**, #2/#22/#37/#38 |
+| Modelos e GPU | Preload no worker correto, cache em disco, RTX 4070/CPU, compute types e histórico sem métricas inventadas | **Pendente**, #44–#57 |
+| Segurança/privacidade | Sessões isoladas, origem protegida, segredos fora dos logs, logs e dados expiram conforme política, CI e revisão | **Parcial**, #23/#24/#37 |
+| Release e reversão | Release checklist, snapshot/rollback atuais e decisão do operador (sem religar TTS retirado) | **Pendente**, #19/#28 |
+
+**100% da versão pública Whisper** só será declarado quando todos os *gates obrigatórios* tiverem evidência datada, link para execução/commit, resultado e aprovação explícita. Qwen e melhorias de investigação podem permanecer em marco pós-release, **desde que** a decisão seja documentada e não esconda risco P1/P2 obrigatório.
+
+## Próximo ciclo recomendado — ordem operacional
+
+1. **P0 — rastreabilidade:** identificar SHA realmente implantado no Windows e versão do Worker, sem imprimir segredo. Verificar diferença contra `main`. Não assumir que o PR #59 chegou à produção.
+2. **P0 — smoke pós-DNS:** realizar 1 novo job curto, com dados autorizados, conclusão e downloads; registrar apenas IDs anonimizados/tempo/status.
+3. **P1 — sobrevivência:** abordar [#35](https://github.com/Faysk/stt/issues/35) com serviço/tarefa Windows e credenciais de conector de privilégio mínimo; ensaio de logoff/reboot/queda antes de dizer autostart concluído.
+4. **P1 — integridade:** [#36](https://github.com/Faysk/stt/issues/36) + #3/#20/#21 para ACK/outbox, e [#37](https://github.com/Faysk/stt/issues/37) para upload/retention.
+5. **P1/P2 — admin:** [#57](https://github.com/Faysk/stt/issues/57) e #44–#56: comparar DOM, capacidades, preload e histórico reais em CPU/GPU. Priorizar correções observadas, não encerrar em massa pelo merge do PR #59.
+6. **Go/no-go:** coletar evidências sanitizadas, CI verde no SHA final, relatórios e decisão explícita; atualizar checkboxes/issues, milestone e esta página.
+
+## Regra de manutenção
+
+- Estado **implementado no Git** ≠ **testado em CI** ≠ **implantado** ≠ **observado em produção** ≠ **aceite final**.
+- Cada issue exige link de PR, teste específico (inclusive teste físico se aplicável), riscos/remanescentes e decisão de encerramento.
+- Não versionar transcrições privadas, áudio de utilizadores, tokens, IP privados desnecessários, credenciais de túnel, `.env`, bases SQLite, pesos nem estado Terraform.
+- O repositório STT governa o código da aplicação; o IaC só referencia a infraestrutura e as evidências. O projeto `Faysk/tda` não faz parte desta migração.

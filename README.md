@@ -45,6 +45,12 @@ Cada envio aceita até **90 MB** e **duas horas** de duração. Limites de frequ
 
 A qualidade varia conforme ruído, idioma, sotaque e características da gravação. Revise o texto antes de usar em contextos que exigem precisão. A disponibilidade pode variar durante manutenção ou ajustes de capacidade.
 
+## Estado de release e milestones
+
+O serviço STT já foi verificado em transcrição de um vídeo público do YouTube e em HTTP **200/200/403 após a retirada do TTS legado**. O código de seleção de modelos, preload, cards CPU/GPU e histórico no console administrativo foi integrado, mas **a instalação no Windows e os testes reais desses recursos continuam sujeitos a homologação**. A disponibilidade após reinício, recuperação de falhas, uploads e validação GPU ainda não estão comprovadas.
+
+Consulte [prontidão para release, marcos propostos e critérios de 100%](docs/RELEASE_READINESS.md). Este estado refere-se ao STT; o bloqueio de mapeamento integral do repositório IaC é independente.
+
 ## Projeto aberto
 
 O código está disponível sob a licença MIT. Para contribuir, executar sua própria instalação ou verificar o projeto, consulte o [guia de desenvolvimento](docs/DEVELOPMENT.md).
