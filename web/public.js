@@ -1,7 +1,14 @@
 const $=id=>document.getElementById(id);
 function el(tag,cls,text){const e=document.createElement(tag);if(cls)e.className=cls;if(text!==undefined)e.textContent=text;return e}
-let key;try{key=localStorage.getItem('tts.session')}catch{}
-if(!/^[a-f0-9]{64}$/.test(key||'')){key=Array.from(crypto.getRandomValues(new Uint8Array(32)),b=>b.toString(16).padStart(2,'0')).join('');try{localStorage.setItem('tts.session',key)}catch{}}
+const validSession=value=>/^[a-f0-9]{64}$/.test(value||'');
+let key;
+try{
+ const modern=localStorage.getItem('stt.session');
+ const legacy=localStorage.getItem('tts.session');
+ key=validSession(modern)?modern:validSession(legacy)?legacy:undefined;
+ if(key)localStorage.setItem('stt.session',key);
+}catch{}
+if(!validSession(key)){key=Array.from(crypto.getRandomValues(new Uint8Array(32)),b=>b.toString(16).padStart(2,'0')).join('');try{localStorage.setItem('stt.session',key)}catch{}}
 let mode='file',selected=null,busy=false,polling=false,jobs=[],health=null,filter='all',renderSignature='',currentTranscript='',readerData=null,readerMode='timeline';
 function message(text,error=false){$('message').textContent=text;$('message').classList.toggle('error',error)}
 function failure(status,detail=''){if(status===413)return t('large');if(status===429)return detail.includes('cheia')?t('full'):t('rate');if(status>=500)return t('unavailable');if(status===400||status===422)return t(mode==='link'?'invalid':'error');return t('error')}
