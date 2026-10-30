@@ -68,3 +68,36 @@ def test_preload_does_not_claim_while_transcription_is_pending(environment):
                            json={"worker": "notebook"})
     assert response.status_code == 200
     assert response.json()["operation"] is None
+
+
+def test_advanced_compute_requires_reported_worker_capability(environment):
+    client, _ = environment
+    client.post("/api/worker/claim", headers=WORKER,
+                json={"id": "notebook", "info": {"compute_types": {"cpu": ["int8_float32"]}}})
+    request = {"worker": "notebook", "model": "small", "device": "cpu",
+               "compute": "int8_float32", "paused": False}
+    assert client.put("/api/admin/settings", headers=ADMIN, json=request).status_code == 200
+    request["compute"] = "int8_bfloat16"
+    assert client.put("/api/admin/settings", headers=ADMIN, json=request).status_code == 400
+    request.update(worker="unknown", compute="int8_float32")
+    assert client.put("/api/admin/settings", headers=ADMIN, json=request).status_code == 400
+
+
+def test_gpu_name_is_snapshotted_from_worker_at_claim(environment):
+    client, _ = environment
+    config = {"worker": "notebook", "model": "small", "device": "cuda",
+              "compute": "float16", "paused": False}
+    assert client.put("/api/admin/settings", headers=ADMIN, json=config).status_code == 200
+    upload = client.post("/api/jobs/upload", headers=SESSION,
+                         files={"file": ("clip.wav", b"test audio", "audio/wav")})
+    assert upload.status_code == 201
+    job_id = upload.json()["id"]
+    claimed = client.post("/api/worker/claim", headers=WORKER,
+                          json={"id": "notebook",
+                                "info": {"gpu": {"name": "Test NVIDIA GPU", "vram_mb": 8192}}})
+    assert claimed.status_code == 200
+    assert claimed.json()["job"]["id"] == job_id
+    details = client.get("/api/admin/jobs/" + job_id, headers=ADMIN).json()["job"]
+    assert details["gpu_name"] == "Test NVIDIA GPU"
+    assert details["device"] == "cuda"
+    assert details["compute"] == "float16"
