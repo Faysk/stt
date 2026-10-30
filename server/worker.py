@@ -121,7 +121,8 @@ def _deliver(path, now=None):
         if data.get('dead_letter_status') == 422:
             _report_invalid_result(path, data, now)
             if data.get('stale'): return 'stale'
-            if not data.get('rejection_notified'): return 'pending'
+        # Notification retries are handled opportunistically by outbox scans.
+        # A rejected job must never block all new claims.
         return 'quarantined'
     if data['retry_at']>now:
         return 'pending'
@@ -158,7 +159,6 @@ def _deliver(path, now=None):
             if response.status_code == 422:
                 _report_invalid_result(path, data, now)
                 if data.get('stale'): return 'stale'
-                if not data.get('rejection_notified'): return 'pending'
             return 'quarantined'
         response.raise_for_status()
         try:
