@@ -66,3 +66,10 @@ Os testes cobrem autorização, isolamento de sessões, expiração, prioridade,
 Instale as dependências JavaScript com `npm ci`. Ajuste as rotas e variáveis do Worker para a sua instalação, configure credenciais Cloudflare no ambiente e use `npm run deploy`. O provisionador em `scripts/cloudflare.py` é específico da configuração deste projeto; revise-o antes de reutilizar em outro domínio.
 
 Em produção, habilite a autenticação da origem com `TTS_REQUIRE_EDGE=1`. Assets públicos podem ser indexados; console administrativo e API devem permanecer fora dos mecanismos de busca. Não exponha diretórios de dados por HTTP.
+
+
+## Auditorias de implementação
+
+- [Auditoria TTS de 30/10/2026](audits/2026-10-30-tts.md): baseline, falhas confirmadas, reproduções isoladas e plano de evolução dos motores.
+
+Achados de auditoria não significam correções implementadas. O relatório distingue bugs, melhorias planejadas e verificações que não foram executadas.
