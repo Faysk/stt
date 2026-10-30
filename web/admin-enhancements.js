@@ -6,6 +6,7 @@
   let formRevision = 0;
   const pendingPreloads = new Set();
   const descriptions = {
+    int16: ['INT16 · Inteiros de 16 bits', 'Pesos quantizáveis em INT16 e outras camadas FP32. Exige CPU compatível; usa mais RAM que INT8 e não garante ganho de velocidade.'],
     int8: ['INT8 · Quantizado', 'Menos memória; ponto de partida recomendado para CPU. Outras camadas usam ponto flutuante.'],
     float32: ['FP32 · Completo', 'Cálculos em 32 bits; consome mais memória e não garante melhor transcrição.'],
     int8_float32: ['INT8 + FP32 · Misto', 'Pesos de camadas quantizáveis em INT8; restantes em FP32. Na CPU pode ser equivalente a INT8.'],
@@ -15,7 +16,7 @@
     int8_bfloat16: ['INT8 + BF16 · Misto', 'Pesos INT8 e restantes em BF16; somente com suporte real do executor.']
   };
   const legacy = {cpu:['int8','float32'], cuda:['float16','int8_float16']};
-  const approved = {cpu:['int8','float32','int8_float32'],
+  const approved = {cpu:['int8','int16','float32','int8_float32'],
                     cuda:['float16','int8_float16','float32','int8','bfloat16','int8_bfloat16']};
   const workerInfo = () => dashboardData?.workers.find(w => w.id === $('worker').value)?.info || {};
   const workerCache = model => (workerInfo().models || []).some(m => m.id === model);
@@ -241,7 +242,7 @@
     }
     const hint = $('precision-explainer');
     if (hint) hint.textContent = device === 'cpu'
-      ? 'FP16 (float16) é indicado para GPU CUDA compatível: na CPU o CTranslate2 normalmente converte para FP32. INT8 + FP32 quantiza parte dos pesos, não combina duas transcrições. Não é automaticamente mais rápido nem mais preciso.'
+      ? 'FP16 (ponto flutuante de 16 bits) é para GPU CUDA compatível. INT16 (inteiros de 16 bits) aparece aqui somente se a CPU anunciar suporte; pode usar mais RAM que INT8. INT8 + FP32 quantiza parte dos pesos, não combina transcrições e não garante qualidade melhor.'
       : 'FP16 usa ponto flutuante de 16 bits. INT8 + FP16 quantiza os pesos de camadas compatíveis e usa FP16 nas demais; geralmente economiza VRAM, mas velocidade e qualidade devem ser medidas. Só mostramos formatos adicionais confirmados pelo executor.';
   }
   const originalRender = renderSettings;
