@@ -1,4 +1,4 @@
-/* Progressive admin controls. Keeps the existing API and HTML selects as fallbacks. */
+/* Card-first admin controls. Hidden selects store API-compatible form state. */
 (() => {
   'use strict';
   let dashboardData = null;
@@ -6,13 +6,13 @@
   let formRevision = 0;
   const pendingPreloads = new Set();
   const descriptions = {
-    int8: ['8-bit', 'Menor consumo de memória; ótimo ponto de partida na CPU.'],
-    float32: ['32-bit', 'Precisão numérica máxima; maior custo de memória e processamento.'],
-    int8_float32: ['8 + 32-bit', 'Pesos quantizados e operações em 32 bits; requer suporte do executor.'],
-    float16: ['16-bit', 'Boa velocidade e memória na GPU CUDA.'],
-    int8_float16: ['8 + 16-bit', 'Pesos quantizados com computação em 16 bits; reduz VRAM.'],
-    bfloat16: ['BF16', 'Faixa numérica ampla com 16 bits; depende da GPU e do motor.'],
-    int8_bfloat16: ['8 + BF16', 'Quantização mista; disponível apenas em builds compatíveis.']
+    int8: ['INT8 · Quantizado', 'Menos memória; ponto de partida recomendado para CPU. Outras camadas usam ponto flutuante.'],
+    float32: ['FP32 · Completo', 'Cálculos em 32 bits; consome mais memória e não garante melhor transcrição.'],
+    int8_float32: ['INT8 + FP32 · Misto', 'Pesos de camadas quantizáveis em INT8; restantes em FP32. Na CPU pode ser equivalente a INT8.'],
+    float16: ['FP16 · Metade', '16 bits em ponto flutuante, eficiente em GPU NVIDIA compatível. Bom equilíbrio de velocidade e VRAM.'],
+    int8_float16: ['INT8 + FP16 · Misto', 'Pesos quantizados em INT8 e restantes em FP16; economiza VRAM. Compare tempo e resultado.'],
+    bfloat16: ['BF16 · 16 bits', 'Outra representação de 16 bits, com maior faixa de expoente; requer suporte CUDA.'],
+    int8_bfloat16: ['INT8 + BF16 · Misto', 'Pesos INT8 e restantes em BF16; somente com suporte real do executor.']
   };
   const legacy = {cpu:['int8','float32'], cuda:['float16','int8_float16']};
   const approved = {cpu:['int8','float32','int8_float32'],
@@ -217,7 +217,9 @@
     if (!mount) return;
     mount.replaceChildren();
     const current = $('compute').value;
-    for (const type of optionList($('device').value)) {
+    const device = $('device').value;
+    const options = optionList(device);
+    for (const type of options) {
       const entry = descriptions[type] || [type,'Tipo de computação disponibilizado pelo executor.'];
       const b = node('button','', 'choice-card precision-card');
       b.type = 'button';
@@ -225,6 +227,9 @@
       b.classList.toggle('selected',type === current);
       b.setAttribute('aria-pressed',String(type === current));
       b.append(node('strong',type),node('small',entry[0]),node('span',entry[1]));
+      const recommended = device === 'cpu' && type === 'int8' ||
+        device === 'cuda' && type === 'float16';
+      if (recommended) b.append(node('small','Ponto de partida recomendado','choice-recommendation'));
       b.onclick = () => {
         if ($('compute').value !== type) {
           $('compute').value = type;
@@ -234,6 +239,10 @@
       };
       mount.append(b);
     }
+    const hint = $('precision-explainer');
+    if (hint) hint.textContent = device === 'cpu'
+      ? 'FP16 (float16) é indicado para GPU CUDA compatível: na CPU o CTranslate2 normalmente converte para FP32. INT8 + FP32 quantiza parte dos pesos, não combina duas transcrições. Não é automaticamente mais rápido nem mais preciso.'
+      : 'FP16 usa ponto flutuante de 16 bits. INT8 + FP16 quantiza os pesos de camadas compatíveis e usa FP16 nas demais; geralmente economiza VRAM, mas velocidade e qualidade devem ser medidas. Só mostramos formatos adicionais confirmados pelo executor.';
   }
   const originalRender = renderSettings;
   renderSettings = function(data) {
@@ -254,7 +263,7 @@
     $('config-summary').classList.toggle('has-pending',dirty);
     if (selector) document.querySelector(selector)?.focus({preventScroll:true});
   };
-  // Native selects remain keyboard-accessible; visual cards reflect their values.
+  // Hidden form state keeps the API payload stable; visible cards handle keyboard and pointer input.
   for (const id of ['worker','model','device','compute']) {
     $(id).addEventListener('change',() => {
       markDirty();

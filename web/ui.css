@@ -209,10 +209,20 @@
   color:#a9ccef;font:11px/1.6 Consolas,monospace;overflow-wrap:anywhere;
 }
 .admin-page .config-summary.has-pending {border-color:#88734b;color:#e4c88e;background:#30271944}
-.admin-page .config-advanced {margin:0 0 16px;border:1px solid #2b394f;border-radius:7px;padding:8px 12px}
-.admin-page .config-advanced summary {cursor:pointer;color:#93b8e6;font-size:11px;outline-offset:4px}
-.admin-page .config-advanced[open] summary {margin-bottom:14px}
-.admin-page .config-advanced summary:focus-visible {outline:2px solid #73b0ff}
+/* The old dropdown panel is gone: cards are the sole visible selectors. */
+.admin-page #configuration-state[hidden] {display:none!important}
+.admin-page .config-note {
+  margin:11px 0 0;
+  color:#95abc5;
+  font-size:11px;
+  line-height:1.6;
+  max-width:76ch;
+}
+.admin-page .choice-card .choice-recommendation {
+  margin-top:auto;
+  color:#83cbb1;
+  font-weight:650;
+}
 
 .admin-page td.rtf-fast {color:#8ad7b3;font-weight:650}
 .admin-page td.rtf-slow {color:#e8b776;font-weight:650}
