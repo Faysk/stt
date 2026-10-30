@@ -806,8 +806,217 @@ def report_model_preload(pid: str,value: ModelPreloadReport, request: Request):
 
 
 class Claim(BaseModel):
-    id: str = Field(pattern=r'^[a-zA-Z0-9_-]{1,80}$')
+    id: str = Field(pattern=r'^[a-zA-Z0-9_-]{1,80}, dependencies=[Depends(worker)])
+def claim(w: Claim, request: Request):
+    require_s7_scope(request,w.id)
+    now = time.time()
+    info=json.dumps(w.info)
+    if len(info)>8000: raise HTTPException(413,'Metadados do executor excedem o limite.')
+    with db() as c:
+        c.execute('BEGIN IMMEDIATE')
+        c.execute('INSERT OR REPLACE INTO workers VALUES (?,?,?)', (w.id,now,info))
+        cfg = json.loads(c.execute('SELECT value FROM settings WHERE id=1').fetchone()[0])
+        side_s7 = (w.id == 's7-edge' and cfg['worker'] != 's7-edge'
+                   and getenv('STT_S7_SIDE_WORKER','0')=='1')
+        if cfg['paused'] or (cfg['worker'] != w.id and not side_s7):
+            return {'job':None}
+        if side_s7:
+            # Explicit opt-in: S7 runs Tiny on small audio while the primary
+            # worker retains its own model/compute policy for other jobs.
+            cfg = dict(cfg,worker='s7-edge',model='tiny',device='cpu',
+                       compute='float32',engine='whisper',language_hint='auto')
+        if w.id == 's7-edge':
+            # Opt-in stays off until the operator has provisioned the scoped key
+            # and verified live inference. No SSH-only entry ever claims work.
+            if getenv('STT_S7_ENABLED','0') != '1':
+                return {'job':None}
+            models = w.info.get('models',[])
+            types = w.info.get('compute_types',{})
+            cpu_types = types.get('cpu',[]) if isinstance(types,dict) else []
+            if (w.info.get('engine') != 'whisper.cpp' or cfg.get('engine','whisper') != 'whisper'
+                    or cfg['device'] != 'cpu' or cfg['model'] != 'tiny'
+                    or cfg['compute'] != 'float32' or 'float32' not in cpu_types
+                    or not isinstance(models,list) or not any(isinstance(m,dict) and m.get('id')=='tiny' for m in models)):
+                return {'job':None}
+        if cfg.get('engine','whisper')=='qwen3' and cfg['model'] not in w.info.get('qwen_models',[]):
+            return {'job':None}
+        if c.execute("SELECT 1 FROM jobs WHERE status='running' AND worker=?",(w.id,)).fetchone():
+            return {'job':None}
+        candidates = c.execute("SELECT * FROM jobs WHERE status='queued' AND expires>? ORDER BY priority DESC,created,id LIMIT 20",(now,)).fetchall()
+        if w.id == 's7-edge':
+            # The phone only claims eligible short uploaded audio.
+            r = next((item for item in candidates if s7_eligible(item)),None)
+        else:
+            r = candidates[0] if candidates else None
+            if (r and getenv('STT_S7_ENABLED','0')=='1'
+                    and getenv('STT_S7_SIDE_WORKER','0')=='1'
+                    and cfg['worker']==w.id):
+                other = c.execute("SELECT seen,info FROM workers WHERE id='s7-edge'").fetchone()
+                active = False
+                if other and now-other['seen']<90:
+                    try:
+                        side_caps=json.loads(other['info'])
+                        active=(side_caps.get('engine')=='whisper.cpp'
+                                and 'float32' in side_caps.get('compute_types',{}).get('cpu',[])
+                                and any(m.get('id')=='tiny' for m in side_caps.get('models',[]) if isinstance(m,dict)))
+                    except (ValueError,TypeError,AttributeError):
+                        active=False
+                if active:
+                    # Prefer different jobs for the primary worker while S7
+                    # is online; fall back if there are no such jobs.
+                    r = next((item for item in candidates if not s7_eligible(item)),r)
+        if not r: return {'job':None}
+        lease = secrets.token_hex(32)
+        gpu = w.info.get('gpu') if isinstance(w.info.get('gpu'),dict) else None
+        gpu_name = str(gpu.get('name',''))[:120] if gpu and cfg['device']=='cuda' else None
+        c.execute("UPDATE jobs SET status='running',started=?,worker=?,model=?,device=?,compute=?,engine=?,gpu_name=?,lease=?,heartbeat=?,progress=0,attempts=attempts+1,error=NULL WHERE id=?", (now,w.id,cfg['model'],cfg['device'],cfg['compute'],cfg.get('engine','whisper'),gpu_name,lease,now,r['id']))
+        c.execute("UPDATE jobs SET stage='preparing' WHERE id=?",(r['id'],))
+        obs.event(c,r['id'],'started',w.id,dict(model=cfg['model'],device=cfg['device'],compute=cfg['compute']))
+        extra = ({'input_type':Path(r['title'] or '').suffix.lower().lstrip('.')}
+                 if w.id == 's7-edge' else {})
+        return {'job':dict(id=r['id'],source=r['source'],lease=lease,expires=r['expires'],**cfg,**extra)}
+
+def leased(c,jid,lease,scope=None):
+    r = c.execute("SELECT * FROM jobs WHERE id=? AND lease=? AND status='running' AND expires>?", (jid,lease,time.time())).fetchone()
+    if not r: raise HTTPException(409,'Lease expirado.')
+    if scope is not None and r['worker'] != scope:
+        raise HTTPException(403,'Chave restrita a outro executor.')
+    return r
+
+@app.get('/api/worker/{jid}/input', dependencies=[Depends(worker)])
+def worker_input(jid: str, request: Request):
+    with db() as c: leased(c,jid,request.headers.get('x-lease',''),getattr(request.state,'worker_scope',None))
+    p = BLOB / jid / 'input.media'
+    if not p.exists(): raise HTTPException(404,'Entrada indisponível.')
+    return FileResponse(p)
+
+class Heartbeat(BaseModel):
+    lease: str
+    progress: float = Field(default=0,ge=0,le=100)
+    stage: str = Field(default='preparing',pattern='^(preparing|downloading|loading|transcribing|finishing)$')
+    runtime: dict = Field(default_factory=dict)
+
+@app.post('/api/worker/{jid}/heartbeat', dependencies=[Depends(worker)])
+def heartbeat(jid: str, h: Heartbeat, request: Request):
+    with db() as c:
+        c.execute('BEGIN IMMEDIATE')
+        r = leased(c,jid,h.lease,getattr(request.state,'worker_scope',None))
+        now = time.time()
+        changed = c.execute("""UPDATE jobs SET heartbeat=?,progress=?,stage=?
+                               WHERE id=? AND lease=? AND status='running' AND expires>?""",
+                            (now,h.progress,h.stage,jid,h.lease,now))
+        if changed.rowcount != 1:
+            raise HTTPException(409,'Lease expirado.')
+        if r['stage'] != h.stage:
+            obs.event(c,jid,'stage',r['worker'],{'stage':h.stage})
+        c.execute('UPDATE workers SET seen=? WHERE id=?',(now,r['worker']))
+    return {'ok':True}
+
+class Segment(BaseModel):
+    start: float = Field(ge=0,le=7200,allow_inf_nan=False)
+    end: float = Field(ge=0,le=7200,allow_inf_nan=False)
+    text: str = Field(max_length=10000)
+
+class Result(BaseModel):
+    lease: str
+    segments: list[Segment] = Field(default_factory=list,max_length=30000)
+    language: str = Field(default='',max_length=20)
+    duration: float = Field(default=0,ge=0,le=7200,allow_inf_nan=False)
+    elapsed: float = Field(default=0,ge=0,allow_inf_nan=False)
+    cpu_seconds: float = Field(default=0,ge=0,allow_inf_nan=False)
+    peak_rss_mb: float = Field(default=0,ge=0,allow_inf_nan=False)
+    peak_vram_mb: float = Field(default=0,ge=0,allow_inf_nan=False)
+    input_bytes: int = Field(default=0,ge=0)
+    error: str | None = Field(default=None,max_length=500)
+    runtime: dict = Field(default_factory=dict)
+    model_revision: str | None = Field(default=None,max_length=80)
+    title: str | None = Field(default=None,max_length=180)
+    result_state: str = Field(default='unknown',pattern='^(unknown|complete|silence|partial)$')
+    metrics: dict | None = None
+    text: str | None = Field(default=None,max_length=500000)
+    timing: str = Field(default='segments',pattern='^(segments|none)$')
+
+    @model_validator(mode='after')
+    def chronology(self):
+        if self.metrics is not None:
+            validate_metrics(self.metrics)
+            if abs(self.metrics['engine_elapsed_s']-self.elapsed)>0.5:
+                raise ValueError('Tempo total e métricas de motor inconsistentes.')
+        if self.timing == 'none' and self.segments:
+            raise ValueError('Untimed text cannot contain timed segments.')
+        if self.error and self.segments:
+            raise ValueError('Erro não pode conter segmentos publicados.')
+        previous = -1.0
+        for segment in self.segments:
+            if segment.end < segment.start:
+                raise ValueError('Segmento com intervalo invertido.')
+            if segment.start + 1e-6 < previous:
+                raise ValueError('Segmentos fora da ordem cronológica.')
+            if self.duration == 0 or segment.end > self.duration + 0.5:
+                raise ValueError('Segmento além da duração declarada.')
+            previous = segment.start  # legitimate overlapping speech is preserved
+        if self.result_state == 'silence' and self.segments:
+            raise ValueError('Silêncio não pode conter segmentos.')
+        if self.result_state in ('complete','partial') and not self.segments and not (self.text or '').strip() and not self.error:
+            raise ValueError('Resultado vazio exige estado silêncio ou desconhecido.')
+        return self
+
+def timestamp(n):
+    ms = int(n*1000)
+    return f'{ms//3600000:02}:{ms//60000%60:02}:{ms//1000%60:02},{ms%1000:03}'
+
+@app.post('/api/worker/{jid}/result', dependencies=[Depends(worker)])
+def result(jid: str, result: Result, request: Request):
+    canonical = json.dumps(result.model_dump(),sort_keys=True,ensure_ascii=False,separators=(',',':'),allow_nan=False)
+    receipt = hashlib.sha256(canonical.encode('utf-8')).hexdigest()
+    lease_hash = hashlib.sha256(result.lease.encode()).hexdigest()
+    with db() as c:
+        c.execute('BEGIN IMMEDIATE')
+        scope = getattr(request.state,'worker_scope',None)
+        previous = c.execute('SELECT status,expires,receipt_hash,receipt_lease,worker FROM jobs WHERE id=?',(jid,)).fetchone()
+        if previous and scope is not None and previous['worker'] != scope:
+            raise HTTPException(403,'Chave restrita a outro executor.')
+        if previous and previous['expires']>time.time() and previous['status'] in ('done','failed'):
+            if previous['receipt_hash']==receipt and previous['receipt_lease']==lease_hash:
+                return {'ok':True,'receipt':receipt,'duplicate':True}
+            raise HTTPException(409,'Tentativa concluída com resultado diferente.')
+        r = leased(c,jid,result.lease,scope)
+        if not result.error:
+            folder = BLOB / jid
+            folder.mkdir(exist_ok=True)
+            text = result.text.strip() if result.text is not None else '\n'.join(s.text.strip() for s in result.segments)
+            exports = {
+                'txt': text,
+                'md': '# Transcrição\n\n' + text,
+                **({'srt': '\n\n'.join(f'{i}\n{timestamp(s.start)} --> {timestamp(s.end)}\n{s.text.strip()}' for i,s in enumerate(result.segments,1))} if result.timing=='segments' else {}),
+                'json': json.dumps(dict(schema_version=1,result_state=result.result_state,timing=result.timing,language=result.language,duration=result.duration,
+                                        model=r['model'],text=text if result.timing=='none' else None,segments=[s.model_dump() for s in result.segments]),ensure_ascii=False)
+            }
+            _publish_generation(folder,receipt,exports)
+        state = 'failed' if result.error else 'done'
+        outcome = 'failed' if result.error else ('partial' if result.result_state=='partial' else 'done')
+        c.execute("""UPDATE jobs SET status=?,finished=?,duration=?,elapsed=?,cpu_seconds=?,peak_rss_mb=?,
+                   peak_vram_mb=?,language=?,error=?,progress=?,lease=NULL,input_bytes=max(input_bytes,?),
+                   receipt_hash=?,receipt_lease=?,result_state=?,timing=?,artifact_layout=? WHERE id=? AND lease=? AND status='running'""",
+                  (state,time.time(),result.duration,result.elapsed,result.cpu_seconds,result.peak_rss_mb,
+                   result.peak_vram_mb,result.language,result.error,0 if result.error else 100,result.input_bytes,
+                   receipt,lease_hash,result.result_state,result.timing,
+                    'generations-v1' if not result.error else None,jid,result.lease))
+        runtime=json.dumps(result.runtime)
+        if len(runtime)>8000: runtime=json.dumps({'metadata_error':'oversized_runtime'})
+        c.execute('UPDATE jobs SET outcome=?,stage=?,runtime=?,model_revision=?,metrics_json=? WHERE id=?',
+                  (outcome,state,runtime,result.model_revision,json.dumps(result.metrics) if result.metrics is not None else None,jid))
+        if result.title and r['source']!='upload': c.execute('UPDATE jobs SET title=? WHERE id=?',(result.title,jid))
+        obs.event(c,jid,outcome,r['worker'],{'elapsed':result.elapsed})
+    return {'ok':True,'receipt':receipt,'duplicate':False}
+
+app.mount('/', StaticFiles(directory=ROOT/'web',html=True),name='web')
+)
     info: dict = Field(default_factory=dict)
+
+def s7_eligible(item):
+    return (item['source']=='upload' and 0 < item['input_bytes'] <= 8*1024**2
+            and Path(item['title'] or '').suffix.lower() in ('.wav','.mp3'))
 
 @app.post('/api/worker/claim', dependencies=[Depends(worker)])
 def claim(w: Claim, request: Request):
