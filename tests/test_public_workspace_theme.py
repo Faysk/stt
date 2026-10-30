@@ -9,7 +9,7 @@ def test_public_header_and_workspace_contract():
     assert 'id="count"' not in html
     assert 'class="badge neutral">24h' not in html
     assert html.count('id="library-count"')==1
-    assert html.index('class="public-intro"')<html.index('class="library-top"')<html.index('class="submission-column"')<html.index('id="library"')
+    assert html.index('class="public-intro"')<html.index('class="submission-column"')<html.index('class="library-top"')<html.index('id="library"')
     assert 'aria-labelledby="library-title"' in html
     assert 'id="jobs" aria-live="polite" aria-busy="true"' in html
 
