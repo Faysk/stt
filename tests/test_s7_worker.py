@@ -22,6 +22,37 @@ MASTER={"x-worker-key":"master-worker-test"}
 CAPS={"engine":"whisper.cpp","models":[{"id":"tiny","revision":"ggml-tiny"}],
       "compute_types":{"cpu":["float32"],"cuda":[]}}
 
+def test_s7_http_transport_sends_compatible_user_agent_and_scoped_key(monkeypatch):
+    """Preserve the exact UA verified on the production route without hiding worker auth."""
+    from s7 import worker as w
+
+    observed = {}
+
+    class FakeResponse:
+        status = 200
+
+    class FakeOpener:
+        def open(self, request, timeout):
+            observed["user_agent"] = request.get_header("User-agent")
+            observed["worker_key"] = request.get_header("X-worker-key")
+            observed["content_type"] = request.get_header("Content-type")
+            observed["url"] = request.full_url
+            return FakeResponse()
+
+    monkeypatch.setattr(w, "build_opener", lambda *handlers: FakeOpener())
+    code, _ = w.call(
+        {"url": "https://stt.faysk.dev", "key": "scoped-test-key"},
+        "/api/worker/claim", "POST", b'{}'
+    )
+    assert code == 200
+    assert observed == {
+        "user_agent": "Mozilla/5.0",
+        "worker_key": "scoped-test-key",
+        "content_type": "application/json",
+        "url": "https://stt.faysk.dev/api/worker/claim",
+    }
+
+
 def test_s7_scoped_key_and_opt_in(tmp_path,monkeypatch):
     module=api(tmp_path,monkeypatch)
     with TestClient(module.app) as c:
