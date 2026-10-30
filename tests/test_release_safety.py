@@ -15,8 +15,6 @@ from fastapi.testclient import TestClient
 def worker(tmp_path, monkeypatch):
     monkeypatch.setenv('STT_WORKER_KEY','dummy-worker')
     monkeypatch.setenv('STT_OUTBOX',str(tmp_path/'outbox'))
-    monkeypatch.delenv('STT_WORKER_KEY',raising=False)
-    monkeypatch.delenv('STT_OUTBOX',raising=False)
     with patch('dotenv.load_dotenv', lambda *args,**kwargs: None):
         import server.worker as module
         return importlib.reload(module)
