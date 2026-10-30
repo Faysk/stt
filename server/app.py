@@ -539,7 +539,7 @@ def admin_jobs(status: str='',search: str='',page: int=1,limit: int=25):
         params.extend([needle]*5)
     where=' AND '.join(filters)
     with db() as c:
-        count=c.execute('SELECT count(*) FROM jobs WHERE '+where,params).fetchone()[0]
+        count=c.execute('SELECT count(*) FROM jobs WHERE '+where,params).fetchone()[0]  # nosec B608: where uses only hardcoded clauses; values bound
         rows=c.execute('SELECT * FROM jobs WHERE '+where+' ORDER BY created DESC,id LIMIT ? OFFSET ?',params+[limit,(page-1)*limit]).fetchall()
     return dict(total=count,page=page,limit=limit,jobs=[admin_job(r) for r in rows])
 
