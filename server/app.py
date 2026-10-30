@@ -131,7 +131,7 @@ def maintenance():
             _purge_job(c,row['id'],now)
         for row in c.execute("SELECT id,attempts FROM jobs WHERE status='running' AND heartbeat<? AND expires>?",(now-180,now)).fetchall():
             failed=row['attempts']>=3
-            c.execute("UPDATE jobs SET status=?,outcome=?,stage=?,error=?,lease=NULL WHERE id=?",('failed' if failed else 'queued','failed' if failed else None,'failed' if failed else 'queued','Executor desconectado; limite de tentativas atingido.' if failed else None,row['id']))
+            c.execute("UPDATE jobs SET status=?,outcome=?,stage=?,error=?,lease=NULL,progress=0 WHERE id=?",('failed' if failed else 'queued','failed' if failed else None,'failed' if failed else 'queued','Executor desconectado; limite de tentativas atingido.' if failed else None,row['id']))
             c.execute('UPDATE jobs SET finished=? WHERE id=?',(now if failed else None,row['id']))
             obs.event(c,row['id'],'failed' if failed else 'requeued',data={'reason':'heartbeat_timeout'})
         stale = c.execute("SELECT id FROM jobs WHERE status='uploading' AND created<?",(now-900,)).fetchall()
@@ -542,7 +542,7 @@ def claim(w: Claim):
         r = c.execute("SELECT * FROM jobs WHERE status='queued' AND expires>? ORDER BY priority DESC,created,id LIMIT 1", (now,)).fetchone()
         if not r: return {'job':None}
         lease = secrets.token_hex(32)
-        c.execute("UPDATE jobs SET status='running',started=?,worker=?,model=?,device=?,compute=?,engine=?,lease=?,heartbeat=?,attempts=attempts+1,error=NULL WHERE id=?", (now,w.id,cfg['model'],cfg['device'],cfg['compute'],cfg.get('engine','whisper'),lease,now,r['id']))
+        c.execute("UPDATE jobs SET status='running',started=?,worker=?,model=?,device=?,compute=?,engine=?,lease=?,heartbeat=?,progress=0,attempts=attempts+1,error=NULL WHERE id=?", (now,w.id,cfg['model'],cfg['device'],cfg['compute'],cfg.get('engine','whisper'),lease,now,r['id']))
         c.execute("UPDATE jobs SET stage='preparing' WHERE id=?",(r['id'],))
         obs.event(c,r['id'],'started',w.id,dict(model=cfg['model'],device=cfg['device'],compute=cfg['compute']))
         return {'job':dict(id=r['id'],source=r['source'],lease=lease,expires=r['expires'],**cfg)}
