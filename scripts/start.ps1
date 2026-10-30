@@ -14,4 +14,4 @@ if ($envText -match '(?m)^(?:STT|TTS)_TUNNEL_TOKEN=') {
   $tunnel = Start-Process -FilePath $runtime -ArgumentList '-m','server.tunnel' -WorkingDirectory $projectPath -WindowStyle Hidden -RedirectStandardOutput (Join-Path $logs 'tunnel.log') -RedirectStandardError (Join-Path $logs 'tunnel-error.log') -PassThru
   $tunnel.Id | Set-Content (Join-Path $logs 'tunnel.pid')
 }
-Write-Output 'API e executor iniciados. Publique STT somente após o gate de cutover (#19).'
+Write-Output 'API e executor iniciados. STT API, worker e túnel iniciados.'
