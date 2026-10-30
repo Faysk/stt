@@ -37,6 +37,9 @@
   };
   const optionList = device => {
     const exposed = workerInfo().compute_types?.[device];
+    // whisper.cpp exposes one validated CPU profile, not CTranslate2 modes.
+    if ($('worker').value === 's7-edge')
+      return approved[device].filter(type => Array.isArray(exposed) && exposed.includes(type));
     return approved[device].filter(type =>
       legacy[device].includes(type) || (Array.isArray(exposed) && exposed.includes(type)));
   };
@@ -70,6 +73,10 @@
   }
   async function requestPreload(model) {
     const worker = $('worker').value;
+    if (worker === 's7-edge') {
+      showWarning('S7 Edge usa pesos GGML preparados localmente; não aceita preload remoto.');
+      return;
+    }
     const id = worker + ':' + model;
     const status = stateOf(model);
     if (status.cls === 'good' || status.cls === 'working' || pendingPreloads.has(id)) return;
@@ -260,7 +267,9 @@
     const device = $('device').value;
     const options = optionList(device);
     for (const type of options) {
-      const entry = descriptions[type] || [type,'Tipo de computação disponibilizado pelo executor.'];
+      const entry = $('worker').value === 's7-edge' && type === 'float32'
+        ? ['CPU GGML · Tiny', 'Perfil de execução do whisper.cpp; o arquivo GGML Tiny pode ter pesos FP16. Não equivale ao FP32 do CTranslate2.']
+        : descriptions[type] || [type,'Tipo de computação disponibilizado pelo executor.'];
       const b = node('button','', 'choice-card precision-card');
       b.type = 'button';
       b.dataset.compute = type;
@@ -280,7 +289,8 @@
       mount.append(b);
     }
     const hint = $('precision-explainer');
-    if (hint) hint.textContent = device === 'cpu'
+    if (hint && $('worker').value === 's7-edge') hint.textContent = 'S7 Edge: whisper.cpp em CPU ARM64, modelo GGML Tiny. O nome float32 é um perfil compatível da API, não uma garantia sobre a precisão de cada peso interno.';
+    else if (hint) hint.textContent = device === 'cpu'
       ? 'FP16 (ponto flutuante de 16 bits) é para GPU CUDA compatível. INT16 (inteiros de 16 bits) aparece aqui somente se a CPU anunciar suporte; pode usar mais RAM que INT8. INT8 + FP32 quantiza parte dos pesos, não combina transcrições e não garante qualidade melhor.'
       : 'FP16 usa ponto flutuante de 16 bits. INT8 + FP16 quantiza os pesos de camadas compatíveis e usa FP16 nas demais; geralmente economiza VRAM, mas velocidade e qualidade devem ser medidas. Só mostramos formatos adicionais confirmados pelo executor.';
   }
