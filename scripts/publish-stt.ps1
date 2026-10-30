@@ -122,8 +122,11 @@ try {
     $sha = (& git rev-parse HEAD | Out-String).Trim()
     if ($LASTEXITCODE -ne 0) { throw 'GIT_SHA_FAILED' }
     Write-Host "Release checkout: $sha"
-    Write-Host 'Installing locked Node dependencies...'
-    Invoke-Native 'npm' @('ci')
+    Write-Host 'Checking existing Node dependencies against package-lock.json (read only)...'
+    # npm ci unlinks all installed packages and fails on Windows when Wrangler
+    # keeps esbuild.exe in use. Provision dependencies separately if mismatched.
+    Invoke-Native 'node' @('scripts/verify-node-deps.mjs')
+    Write-Host 'Reusing verified Node dependencies; npm ci skipped.'
 
     Write-Host 'Running local Python and Node regressions...'
     Invoke-Native $python @('-m','pytest','-q')

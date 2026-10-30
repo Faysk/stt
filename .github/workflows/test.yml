@@ -28,6 +28,8 @@ jobs:
           node-version: '22'
       - name: Install locked Wrangler
         run: npm ci
+      - name: Verify installed npm packages against committed lockfile
+        run: node scripts/verify-node-deps.mjs
       - name: Validate isolated STT Worker locally without credentials or deploy
         run: npx wrangler deploy --config wrangler.stt.jsonc --dry-run --outdir .wrangler/stt-dry-run
 
@@ -41,6 +43,16 @@ jobs:
         run: |
           uv sync --locked --group dev
           uv run pytest -q
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+      - name: Verify real Windows npm install and read-only release check
+        shell: pwsh
+        run: |
+          npm ci
+          if ($LASTEXITCODE -ne 0) { throw 'npm ci failed on Windows CI' }
+          node scripts/verify-node-deps.mjs
+          if ($LASTEXITCODE -ne 0) { throw 'Dependency verification failed on Windows CI' }
       - name: Parse operational PowerShell scripts
         shell: pwsh
         run: |

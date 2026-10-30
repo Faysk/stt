@@ -28,3 +28,10 @@ def test_wait_is_bounded_and_fail_closed_for_active_listener():
     assert "if ($timer.Elapsed.TotalSeconds -ge $TimeoutSeconds)" in block
     assert "throw \"STT_PORT_NOT_RELEASED:" in block
     assert "Start-Sleep -Milliseconds 400" in block
+
+
+def test_release_reuses_verified_node_dependencies_without_mutating_them():
+    source = RELEASE.read_text(encoding="utf-8")
+    assert "Invoke-Native 'node' @('scripts/verify-node-deps.mjs')" in source
+    assert "Invoke-Native 'npm' @('ci')" not in source
+    assert source.index("verify-node-deps.mjs") < source.index("Running local Python and Node regressions")
