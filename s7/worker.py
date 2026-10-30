@@ -8,7 +8,10 @@ import json
 import os
 from pathlib import Path
 import re
-import resource
+try:
+    import resource
+except ImportError:  # Windows CI tests parse and validate the adapter only.
+    resource = None
 import shutil
 import signal
 import subprocess
@@ -111,7 +114,7 @@ def json_post(cfg,path,payload,timeout=30):
         response.close()
 
 def atomic_json(path,data):
-    temporary=path.with_suffix(".tmp")
+    temporary=path.with_name(path.name+"."+os.urandom(5).hex()+".tmp")
     flags=os.O_WRONLY | os.O_CREAT | os.O_EXCL
     fd=os.open(temporary,flags,0o600)
     try:
@@ -251,7 +254,7 @@ def run_job(cfg,job):
     thread=threading.Thread(target=heart,daemon=True)
     thread.start()
     started=time.monotonic()
-    before=resource.getrusage(resource.RUSAGE_CHILDREN)
+    before=resource.getrusage(resource.RUSAGE_CHILDREN) if resource else None
     result=None
     try:
         with tempfile.TemporaryDirectory(prefix="job-",dir=cfg["work"]) as name:
@@ -293,10 +296,10 @@ def run_job(cfg,job):
         stopped.set()
         thread.join(timeout=2)
     if lost.is_set(): return None
-    after=resource.getrusage(resource.RUSAGE_CHILDREN)
+    after=resource.getrusage(resource.RUSAGE_CHILDREN) if resource else None
     result.update(elapsed=max(0,time.monotonic()-started),
-                  cpu_seconds=max(0,(after.ru_utime+after.ru_stime)-(before.ru_utime+before.ru_stime)),
-                  peak_rss_mb=max(0,after.ru_maxrss/1024),peak_vram_mb=0,
+                  cpu_seconds=max(0,(after.ru_utime+after.ru_stime)-(before.ru_utime+before.ru_stime)) if before and after else 0,
+                  peak_rss_mb=max(0,after.ru_maxrss/1024) if after else 0,peak_vram_mb=0,
                   runtime={"engine":"whisper.cpp","backend":"ggml-cpu","device":"s7-edge"},
                   timing="segments")
     return spool(cfg,job,result)
