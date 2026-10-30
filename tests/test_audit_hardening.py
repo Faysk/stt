@@ -272,3 +272,43 @@ def test_operational_privacy_retention_and_five_year_cleanup(api):
         assert db.execute('SELECT count(*) FROM jobs WHERE id=?', (ancient,)).fetchone()[0] == 0
         assert db.execute('SELECT count(*) FROM telemetry WHERE bucket<?',
                           (now - mod.AGGREGATE_RETENTION,)).fetchone()[0] == 0
+
+
+def test_corrupt_outbox_eventually_expires(tmp_path, monkeypatch):
+    import os
+    w = module_worker(monkeypatch, tmp_path)
+    w.OUTBOX.mkdir()
+    corrupt = w.OUTBOX / 'expired-corrupt.json'
+    corrupt.write_text('broken', encoding='utf-8')
+    old = time.time() - 2 * 86400
+    os.utime(corrupt, (old, old))
+    assert w._drain_outbox() is False
+    assert not corrupt.exists()
+
+
+def test_whisper_decoded_duration_rejects_untrusted_long_audio(monkeypatch):
+    from server.infer import bounded_audio_duration
+
+    class Codec:
+        sample_rate = 2
+
+    class Stream:
+        type = 'audio'
+        codec_context = Codec()
+
+    class Frame:
+        def __init__(self, count):
+            self.sample_rate = 2
+            self.samples = count
+
+    class Container:
+        streams = [Stream()]
+
+        def decode(self, stream):
+            assert stream is self.streams[0]
+            yield Frame(3)
+            yield Frame(3)
+
+    with pytest.raises(ValueError, match='Duração máxima'):
+        bounded_audio_duration(Container(), maximum=2)
+    assert bounded_audio_duration(Container(), maximum=4) == 3
