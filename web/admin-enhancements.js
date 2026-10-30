@@ -308,7 +308,21 @@
         $('runs').append(row);
       }
     }
-    try { return await originalLoadJobs(...args); }
+    try {
+      const result = await originalLoadJobs(...args);
+      const rows = Array.from($('runs').querySelectorAll('tr'));
+      for (const [index,job] of lastRows.entries()) {
+        const rtf = job.duration > 0 && job.elapsed != null ? job.elapsed / job.duration : null;
+        const cell = rows[index]?.children[12];
+        if (!cell || rtf == null || !Number.isFinite(rtf)) continue;
+        cell.classList.toggle('rtf-fast',rtf < 1);
+        cell.classList.toggle('rtf-slow',rtf >= 1);
+        cell.title = rtf < 1
+          ? 'Processamento mais rápido que a duração do áudio'
+          : 'Processamento igual ou mais lento que a duração do áudio';
+      }
+      return result;
+    }
     finally {
       pendingHistoryLoads--;
       if (!pendingHistoryLoads) section.classList.remove('is-fetching');
