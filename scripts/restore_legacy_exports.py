@@ -80,7 +80,13 @@ def plan(data, now=None):
                 dst = folder / ('transcript.' + fmt)
                 if not _regular(src) or dst.is_symlink() or (dst.exists() and not dst.is_file()):
                     raise RollbackError('UNSAFE_RESULT_FILE')
-                if not dst.exists() or _digest(src) != _digest(dst):
+                if dst.exists():
+                    if _digest(src) != _digest(dst):
+                        # A pre-existing flat export might be the only surviving
+                        # copy from a previous generation. Never overwrite it.
+                        # The operator must resolve the discrepancy offline.
+                        raise RollbackError('CONFLICTING_LEGACY_EXPORT')
+                else:
                     pending.append((src, dst))
             # A stale legacy SRT must never be visible for an untimed result.
             old_srt = folder / 'transcript.srt'
@@ -100,6 +106,12 @@ def _copy_atomic(source, target):
             shutil.copyfileobj(inp, out, 1024 * 1024)
             out.flush()
             os.fsync(out.fileno())
+        if _digest(source) != _digest(temp_path):
+            raise RollbackError('COPY_CHECKSUM_MISMATCH')
+        # Fail closed if an existing legacy export appeared since preflight.
+        # This also prevents accidental replacement in a wrongly "offline" run.
+        if target.exists() or target.is_symlink():
+            raise RollbackError('LEGACY_TARGET_CHANGED_DURING_COPY')
         os.replace(temp_path, target)
         if os.name != 'nt':
             directory = os.open(target.parent, os.O_RDONLY | getattr(os, 'O_DIRECTORY', 0))

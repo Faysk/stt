@@ -44,6 +44,15 @@ def _atomic_json(path, value):
             stream.flush()
             os.fsync(stream.fileno())
         temp.replace(path)
+        # fsync on the file alone does not make the renamed directory entry
+        # durable across POSIX power failures. The outbox is the only surviving
+        # result once the inference temp directory is removed.
+        if os.name != 'nt':
+            directory_fd = os.open(path.parent, os.O_RDONLY | getattr(os, 'O_DIRECTORY', 0))
+            try:
+                os.fsync(directory_fd)
+            finally:
+                os.close(directory_fd)
     finally:
         temp.unlink(missing_ok=True)
 

@@ -417,9 +417,11 @@ async def upload(request: Request, file: UploadFile = File(...), own=Depends(own
     with db() as c:
         jid = new_job(c, own, Path(file.filename).name[:180], 'upload',request)
     folder = BLOB / jid
-    folder.mkdir()
+    created = False
     size = 0
     try:
+        folder.mkdir()
+        created = True
         with (folder / 'input.media').open('wb') as f:
             while chunk := await file.read(1024*1024):
                 size += len(chunk)
@@ -431,7 +433,10 @@ async def upload(request: Request, file: UploadFile = File(...), own=Depends(own
         with db() as c:
             c.execute("UPDATE jobs SET status='queued',input_bytes=? WHERE id=?", (size,jid))
     except BaseException:
-        shutil.rmtree(folder, ignore_errors=True)
+        # The directory is ours only after mkdir succeeds. Never remove a
+        # pre-existing directory when disk creation failed.
+        if created:
+            shutil.rmtree(folder, ignore_errors=True)
         with db() as c:
             c.execute('DELETE FROM jobs WHERE id=?', (jid,))
         raise
@@ -460,10 +465,21 @@ def youtube_url(value):
 @app.post('/api/jobs/youtube', status_code=201)
 def youtube(link: Link, request: Request, own=Depends(owner)):
     url = youtube_url(link.url)
-    with db() as c:
-        jid = new_job(c, own, 'YouTube', url,request)
-        c.execute("UPDATE jobs SET status='queued' WHERE id=?", (jid,))
-    (BLOB / jid).mkdir()
+    folder = None
+    created = False
+    try:
+        with db() as c:
+            jid = new_job(c, own, 'YouTube', url,request)
+            folder = BLOB / jid
+            # The job must not be published in SQLite without durable input
+            # workspace; failure here rolls back the queue insertion.
+            folder.mkdir()
+            created = True
+            c.execute("UPDATE jobs SET status='queued' WHERE id=?", (jid,))
+    except BaseException:
+        if created:
+            shutil.rmtree(folder, ignore_errors=True)
+        raise
     return {'id':jid}
 
 def artifact_path(row, fmt):
@@ -494,7 +510,14 @@ def _publish_generation(folder, receipt, exports):
     reused only when all files match the same canonical receipt.
     """
     root = folder / 'results'
+    if folder.is_symlink() or root.is_symlink():
+        raise OSError('Unsafe result storage directory')
+    created = not root.is_dir()
     root.mkdir(exist_ok=True)
+    if created:
+        # The new results directory entry must survive a power failure before
+        # SQLite can commit a pointer to a generation inside it.
+        _fsync_directory(folder)
     target = root / receipt
     if target.exists():
         if target.is_symlink() or not target.is_dir():

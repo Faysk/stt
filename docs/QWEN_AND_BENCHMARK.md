@@ -71,6 +71,17 @@ Os resultados só têm texto; publicar em produção exige antes ensaios reais
 PT, EN e mistos com áudio cortado em fronteiras, além de validação de drivers,
 VRAM, latência, idiomas, silêncio e modelos pesados. É uma feature parcial da #7.
 
+## Proteção de GPU antes de decodificar/transcrever (draft PR #31)
+
+O adaptador valida o ficheiro **antes de carregar pesos na GPU**:
+
+1. Recebe o upload ou faz download de YouTube respeitando o limite real de **90 MiB** (incluindo callback de progresso).
+2. Executa uma primeira passagem de **decode PyAV em streaming**, sem reter PCM na memória, para somar as durações dos frames, rejeitar áudio vazio/inválido e barrar **> 7200 segundos** mesmo que o contentor tenha metadata falsa.
+3. Só depois importa Torch/Transformers, verifica CUDA/VRAM, carrega o modelo local e inicia inferência.
+4. Durante o ASR, `iter_windows()` **mantém uma segunda barreira** ao número de amostras efetivamente resampladas.
+
+A pré-decodificação pode adicionar latência e I/O: `media_probe_s` é medido separadamente, e o custo deve ser avaliado na GPU/Windows reais. Um erro de download ou decode não deve reservar VRAM para pesos do modelo. Testes sintéticos exercitam os limites e verificam que áudio inválido não chega ao Torch. **Esses testes não provam qualidade de áudio, FPS, VRAM, compatibilidade com ficheiros reais nem integridade criptográfica dos pesos**; tudo isso continua na issue [#28](https://github.com/Faysk/tts/issues/28).
+
 ## Métricas v1
 
 `server/metrics.py` define `schema_version=1` e valida tempos finitos

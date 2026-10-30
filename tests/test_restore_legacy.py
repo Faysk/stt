@@ -75,3 +75,31 @@ def test_symlinked_generation_is_never_followed(tmp_path):
     generation.symlink_to(outside, target_is_directory=True)
     with pytest.raises(RollbackError, match='UNSAFE_RESULT_GENERATION'):
         plan(root)
+
+
+def test_conflicting_flat_result_is_never_overwritten(tmp_path,capsys):
+    root,jid,_=fixture(tmp_path)
+    target=root/'blob'/jid/'transcript.txt'
+    target.write_text('existing unique transcript',encoding='utf-8')
+    assert main(['--data-root',str(root),'--apply','--ack-offline-and-backed-up'])==2
+    assert target.read_text(encoding='utf-8')=='existing unique transcript'
+    assert not (root/'blob'/jid/'transcript.md').exists()
+    assert 'CONFLICTING_LEGACY_EXPORT' in capsys.readouterr().err
+
+
+def test_target_created_after_preflight_is_not_replaced(tmp_path,monkeypatch):
+    import shutil
+    from scripts import restore_legacy_exports as helper
+
+    source=tmp_path/'committed.txt'
+    target=tmp_path/'legacy.txt'
+    source.write_text('new-generation-content',encoding='utf-8')
+    original=shutil.copyfileobj
+    def inject_race(inp,out,*args,**kwargs):
+        original(inp,out,*args,**kwargs)
+        target.write_text('existing created during copy',encoding='utf-8')
+    monkeypatch.setattr(helper.shutil,'copyfileobj',inject_race)
+    with pytest.raises(RollbackError,match='LEGACY_TARGET_CHANGED_DURING_COPY'):
+        helper._copy_atomic(source,target)
+    assert target.read_text(encoding='utf-8')=='existing created during copy'
+    assert not list(tmp_path.glob('.rollback-*.tmp'))

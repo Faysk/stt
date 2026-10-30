@@ -214,3 +214,87 @@ def test_real_api_result_can_be_restored_for_offline_legacy_rollback(tmp_path,mo
         with TestClient(module.app) as client:
             assert client.get(f'/api/jobs/{jid}/download/txt',headers=session).text=='integration fixture'
             assert client.get(f'/api/jobs/{jid}/download/srt',headers=session).status_code==200
+
+
+def test_outbox_atomic_rename_fsyncs_directory_on_posix(tmp_path,monkeypatch):
+    """A successful payload must survive crash between rename and directory flush."""
+    import os
+    import stat
+    if os.name=='nt':
+        pytest.skip('Directory fsync is unavailable on Windows')
+    w=worker(tmp_path,monkeypatch)
+    actual_fsync=os.fsync
+    flushed=[]
+    def observe(fd):
+        flushed.append('dir' if stat.S_ISDIR(os.fstat(fd).st_mode) else 'file')
+        return actual_fsync(fd)
+    monkeypatch.setattr(w.os,'fsync',observe)
+    path=w.OUTBOX/'durable.json'
+    w._atomic_json(path,{'payload':'synthetic-transcript'})
+    assert json.loads(path.read_text(encoding='utf-8'))['payload']=='synthetic-transcript'
+    assert flushed==['file','dir']
+
+
+def test_new_generation_fsyncs_parent_directory_before_sqlite_can_point_to_it(tmp_path,monkeypatch):
+    import server.app as mod
+    folder=tmp_path/'job-data'
+    folder.mkdir()
+    observed=[]
+    actual=mod._fsync_directory
+    def observe(path):
+        observed.append(path)
+        return actual(path)
+    monkeypatch.setattr(mod,'_fsync_directory',observe)
+    digest='a'*64
+    mod._publish_generation(folder,digest,{'txt':'test result'})
+    assert (folder/'results'/digest/'transcript.txt').read_text(encoding='utf-8')=='test result'
+    assert observed[0]==folder
+    assert observed[1].parent==folder/'results'
+    assert observed[1].name.startswith('.stage-')
+    assert observed[2]==folder/'results'
+
+
+def test_generation_rejects_symlinked_results_directory(tmp_path):
+    import server.app as mod
+    folder=tmp_path/'job'
+    folder.mkdir()
+    outside=tmp_path/'outside'
+    outside.mkdir()
+    (folder/'results').symlink_to(outside,target_is_directory=True)
+    with pytest.raises(OSError,match='Unsafe result storage directory'):
+        mod._publish_generation(folder,'a'*64,{'txt':'must not escape'})
+    assert list(outside.iterdir())==[]
+
+
+@pytest.mark.parametrize('source',['upload','youtube'])
+def test_failed_workspace_creation_does_not_publish_unprocessable_job(
+        source,tmp_path,monkeypatch):
+    """A filesystem failure must never leave an unservable queued job."""
+    monkeypatch.setenv('TTS_DATA',str(tmp_path))
+    monkeypatch.setenv('TTS_ADMIN_KEY','test-admin')
+    monkeypatch.setenv('TTS_WORKER_KEY','test-worker')
+    monkeypatch.setenv('TTS_REQUIRE_EDGE','0')
+    for suffix in ('DATA','ADMIN_KEY','WORKER_KEY','REQUIRE_EDGE'):
+        monkeypatch.delenv('STT_'+suffix,raising=False)
+    with patch('dotenv.load_dotenv',lambda *a,**kw:None):
+        import server.app as module
+        module=importlib.reload(module)
+        with TestClient(module.app) as client:
+            original=module.Path.mkdir
+            def no_workspace(path,*args,**kwargs):
+                if path.parent==module.BLOB and path.name!='.tmp':
+                    raise OSError('synthetic disk failure')
+                return original(path,*args,**kwargs)
+            monkeypatch.setattr(module.Path,'mkdir',no_workspace)
+            with pytest.raises(OSError,match='synthetic disk failure'):
+                if source=='upload':
+                    client.post('/api/jobs/upload',
+                                headers={'x-session-key':'a'*64},
+                                files={'file':('fixture.wav',b'dummy','audio/wav')})
+                else:
+                    client.post('/api/jobs/youtube',
+                                headers={'x-session-key':'a'*64},
+                                json={'url':'https://www.youtube.com/watch?v=dQw4w9WgXcQ'})
+            with module.db() as conn:
+                assert conn.execute('SELECT COUNT(*) FROM jobs').fetchone()[0]==0
+            assert list(module.BLOB.glob('[0-9a-f]'*32))==[]
