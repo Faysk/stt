@@ -43,7 +43,9 @@ def test_stt_public_metadata_is_canonical_and_preserves_old_repo_link():
     sitemap = (root / 'sitemap.xml').read_text(encoding='utf-8')
     robots = (root / 'robots.txt').read_text(encoding='utf-8')
     assert 'https://stt.faysk.dev/' in index
-    assert 'https://tts.faysk.dev/' not in index
+    assert 'rel="canonical" href="https://tts.faysk.dev/"' not in index
+    assert 'id="legacy-access"' in index
+    assert 'href="https://tts.faysk.dev/"' in index
     assert 'stt / faysk' in index
     assert 'Operação / stt faysk' in admin
     assert manifest['short_name'] == 'stt'
