@@ -1,6 +1,7 @@
 import hashlib
 import hmac
 import json
+import math
 import os
 import secrets
 import shutil
@@ -16,7 +17,7 @@ from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Request, UploadFile, File, Depends
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from server.catalog import MODEL_CATALOG, installed_models
 from server import observability as obs
 
@@ -61,12 +62,15 @@ def init():
         CREATE TABLE IF NOT EXISTS settings (id INTEGER PRIMARY KEY, value TEXT);
         CREATE TABLE IF NOT EXISTS workers (id TEXT PRIMARY KEY, seen REAL, info TEXT);
         CREATE TABLE IF NOT EXISTS admission (client TEXT, created REAL);
+        CREATE TABLE IF NOT EXISTS upload_slots (id TEXT PRIMARY KEY, owner TEXT NOT NULL, created REAL NOT NULL);
         ''')
         columns={r[1] for r in c.execute('PRAGMA table_info(jobs)')}
         for name,definition in {
             'client_tag':'TEXT','network_tag':'TEXT','ui_language':'TEXT',
             'priority':'INTEGER DEFAULT 0','outcome':'TEXT','runtime':'TEXT',
-            'model_revision':'TEXT','stage':"TEXT DEFAULT 'queued'"}.items():
+            'model_revision':'TEXT','stage':"TEXT DEFAULT 'queued'",
+            'purged_at':'REAL','purge_retry_at':'REAL DEFAULT 0','purge_attempts':'INTEGER DEFAULT 0',
+            'purge_error':'TEXT','receipt_hash':'TEXT','receipt_lease':'TEXT','result_state':'TEXT'}.items():
             if name not in columns: c.execute(f'ALTER TABLE jobs ADD COLUMN {name} {definition}')
         c.execute("UPDATE jobs SET outcome=status WHERE outcome IS NULL AND status IN ('done','failed','cancelled')")
         c.execute("UPDATE jobs SET stage=status WHERE stage='queued' AND status IN ('done','failed','expired','cancelled')")
@@ -76,19 +80,54 @@ def init():
         obs.install(c)
         c.execute('INSERT OR IGNORE INTO settings VALUES (1, ?)', (json.dumps(dict(worker='notebook', model='small', device='cpu', compute='int8', paused=False)),))
 
+def _purge_job(c, jid, now):
+    # The physical deletion receipt is independent of public expiry. Retry after
+    # restart or transient file-lock errors, including already-expired legacy rows.
+    if len(jid) != 32 or any(ch not in '0123456789abcdef' for ch in jid):
+        c.execute("UPDATE jobs SET purge_error=?,purge_retry_at=? WHERE id=?",
+                  ('invalid job directory identifier', now + 3600, jid))
+        return
+    folder = BLOB / jid
+    try:
+        if folder.is_symlink():
+            raise OSError('Refusing to follow job directory symlink')
+        if folder.exists():
+            shutil.rmtree(folder)
+        if folder.exists() or folder.is_symlink():
+            raise OSError('Job directory still exists after deletion')
+    except OSError as error:
+        attempt = c.execute('SELECT purge_attempts FROM jobs WHERE id=?', (jid,)).fetchone()[0] + 1
+        delay = min(3600, 15 * 2 ** min(attempt - 1, 8))
+        c.execute("""UPDATE jobs SET purge_attempts=?,purge_retry_at=?,purge_error=?
+                     WHERE id=?""", (attempt, now + delay, type(error).__name__, jid))
+    else:
+        c.execute("""UPDATE jobs SET purged_at=?,purge_retry_at=0,purge_error=NULL
+                     WHERE id=?""", (now, jid))
+
 def maintenance():
     now = time.time()
-    temp_root=(BLOB/'.tmp').resolve()
+    temp_root = (BLOB / '.tmp').resolve()
     if temp_root.exists():
         for path in temp_root.iterdir():
-            if path.resolve().parent==temp_root and now-path.stat().st_mtime>TTL:
-                if path.is_dir(): shutil.rmtree(path,ignore_errors=True)
-                else: path.unlink(missing_ok=True)
+            try:
+                if path.is_symlink():
+                    # Never follow symlinks outside the managed temporary root.
+                    path.unlink()
+                elif path.resolve().parent == temp_root and now - path.stat().st_mtime > TTL:
+                    if path.is_dir(): shutil.rmtree(path)
+                    else: path.unlink(missing_ok=True)
+            except OSError:
+                # A locked temporary file remains eligible on the next pass.
+                continue
     with db() as c:
-        rows = c.execute("SELECT id FROM jobs WHERE expires <= ? AND status != 'expired'", (now,)).fetchall()
-        for r in rows:
-            shutil.rmtree(BLOB / r['id'], ignore_errors=True)
-        c.execute("UPDATE jobs SET status='expired',stage='expired',owner='',title=NULL,source=NULL,error=NULL,lease=NULL,language=NULL WHERE expires<=?", (now,))
+        c.execute('BEGIN IMMEDIATE')
+        c.execute("""UPDATE jobs SET status='expired',stage='expired',owner='',
+                  title=NULL,source=NULL,error=NULL,lease=NULL,language=NULL
+                  WHERE expires<=? AND status!='expired'""", (now,))
+        rows = c.execute("""SELECT id FROM jobs WHERE expires<=? AND purged_at IS NULL
+                            AND coalesce(purge_retry_at,0)<=?""", (now,now)).fetchall()
+        for row in rows:
+            _purge_job(c,row['id'],now)
         for row in c.execute("SELECT id,attempts FROM jobs WHERE status='running' AND heartbeat<? AND expires>?",(now-180,now)).fetchall():
             failed=row['attempts']>=3
             c.execute("UPDATE jobs SET status=?,outcome=?,stage=?,error=?,lease=NULL WHERE id=?",('failed' if failed else 'queued','failed' if failed else None,'failed' if failed else 'queued','Executor desconectado; limite de tentativas atingido.' if failed else None,row['id']))
@@ -96,10 +135,14 @@ def maintenance():
             obs.event(c,row['id'],'failed' if failed else 'requeued',data={'reason':'heartbeat_timeout'})
         stale = c.execute("SELECT id FROM jobs WHERE status='uploading' AND created<?",(now-900,)).fetchall()
         for row in stale:
-            shutil.rmtree(BLOB/row['id'],ignore_errors=True)
+            # Stale media is also covered by the ordinary expiry/purge pass.
+            try: shutil.rmtree(BLOB / row['id'])
+            except FileNotFoundError: pass
+            except OSError: pass
             obs.event(c,row['id'],'failed',data={'reason':'upload_timeout'})
         c.execute("UPDATE jobs SET status='failed',outcome='failed',stage='failed',finished=?,error='Envio interrompido.' WHERE status='uploading' AND created<?",(now,now-900))
         c.execute('DELETE FROM admission WHERE created<?',(now-3600,))
+        c.execute('DELETE FROM upload_slots WHERE created<?',(now-7200,))
 
 stop = threading.Event()
 host_snapshot={}
@@ -154,7 +197,18 @@ async def guard(request: Request, call_next):
         token=request.headers.get('x-session-key','')
         if len(token)!=64 or any(ch not in '0123456789abcdef' for ch in token):
             return JSONResponse({'detail':'Sessão inválida.'},status_code=401)
-    response = await call_next(request)
+    slot = None
+    try:
+        slot = preflight(request)
+    except HTTPException as exc:
+        return JSONResponse({'detail':exc.detail},status_code=exc.status_code)
+    request.state.upload_slot = slot
+    try:
+        response = await call_next(request)
+    finally:
+        if slot:
+            with db() as c:
+                c.execute('DELETE FROM upload_slots WHERE id=?',(slot,))
     response.headers['Cache-Control'] = 'no-store'
     response.headers['X-Content-Type-Options'] = 'nosniff'
     response.headers['Referrer-Policy'] = 'no-referrer'
@@ -180,14 +234,36 @@ def owner(request: Request):
         raise HTTPException(401, 'Sessão inválida.')
     return hashlib.sha256(token.encode()).hexdigest()
 
-def admit(request: Request):
-    ip = request.headers.get('x-tts-client') if os.getenv('TTS_REQUIRE_EDGE')=='1' else request.client.host
-    key = hashlib.sha256((os.getenv('TTS_EDGE_KEY','local')+(ip or 'unknown')).encode()).hexdigest()
+def preflight(request: Request):
+    """Admission runs in HTTP middleware, BEFORE Starlette reads multipart bytes."""
+    if request.method != 'POST' or request.url.path not in ('/api/jobs/upload','/api/jobs/youtube'):
+        return None
+    session = request.headers['x-session-key']
+    own = hashlib.sha256(session.encode()).hexdigest()
+    ip = request.headers.get('x-tts-client') if os.getenv('TTS_REQUIRE_EDGE')=='1' else (request.client.host if request.client else None)
+    key = hashlib.sha256((os.getenv('TTS_EDGE_KEY','local') + (ip or 'unknown')).encode()).hexdigest()
+    now = time.time()
+    is_upload = request.url.path.endswith('/upload')
+    slot = secrets.token_hex(16) if is_upload else None
     with db() as c:
         c.execute('BEGIN IMMEDIATE')
-        if c.execute('SELECT count(*) FROM admission WHERE client=? AND created>?',(key,time.time()-3600)).fetchone()[0]>=20:
+        c.execute('DELETE FROM upload_slots WHERE created<?',(now-7200,))
+        if c.execute('SELECT count(*) FROM admission WHERE client=? AND created>?',(key,now-3600)).fetchone()[0] >= 20:
             raise HTTPException(429,'Limite de envios desta rede atingido. Tente mais tarde.')
-        c.execute('INSERT INTO admission VALUES (?,?)',(key,time.time()))
+        active = c.execute("SELECT count(*) FROM jobs WHERE status IN ('queued','uploading','running')").fetchone()[0]
+        inflight = c.execute('SELECT count(*) FROM upload_slots').fetchone()[0]
+        if active + inflight >= 20:
+            raise HTTPException(429,'Fila cheia. Tente novamente mais tarde.')
+        if c.execute('SELECT count(*) FROM jobs WHERE owner=? AND created>?',(own,now-3600)).fetchone()[0] >= 10:
+            raise HTTPException(429,'Limite de 10 envios por hora nesta sessão.')
+        if is_upload and inflight >= 4:
+            raise HTTPException(429,'Muitos uploads simultâneos. Tente novamente.')
+        if shutil.disk_usage(BLOB).free < 2 * 1024**3:
+            raise HTTPException(503,'Armazenamento temporariamente indisponível.')
+        c.execute('INSERT INTO admission VALUES (?,?)',(key,now))
+        if slot:
+            c.execute('INSERT INTO upload_slots VALUES (?,?,?)',(slot,own,now))
+    return slot
 
 def client_tag(own):
     return hmac.new(os.getenv('TTS_ADMIN_KEY','local').encode(),own.encode(),'sha256').hexdigest()[:16]
@@ -210,7 +286,12 @@ def new_job(c, own, title, source, request=None):
     now = time.time()
     # Serialize admission checks and insertion, including uploads in flight.
     c.execute('BEGIN IMMEDIATE')
-    if c.execute("SELECT count(*) FROM jobs WHERE status IN ('queued','uploading','running')").fetchone()[0] >= 20:
+    slot = getattr(request.state, 'upload_slot', None) if request else None
+    if slot:
+        c.execute('DELETE FROM upload_slots WHERE id=? AND owner=?', (slot,own))
+    active = c.execute("SELECT count(*) FROM jobs WHERE status IN ('queued','uploading','running')").fetchone()[0]
+    inflight = c.execute('SELECT count(*) FROM upload_slots').fetchone()[0]
+    if active + inflight >= 20:
         raise HTTPException(429, 'Fila cheia. Tente novamente mais tarde.')
     if c.execute('SELECT count(*) FROM jobs WHERE owner=? AND created>?', (own, now-3600)).fetchone()[0] >= 10:
         raise HTTPException(429, 'Limite de 10 envios por hora nesta sessão.')
@@ -257,7 +338,7 @@ def jobs(own=Depends(owner)):
     with db() as c:
         return [public(r) for r in c.execute('SELECT * FROM jobs WHERE owner=? AND expires>? ORDER BY created DESC', (own,time.time()))]
 
-@app.post('/api/jobs/upload', status_code=201, dependencies=[Depends(admit)])
+@app.post('/api/jobs/upload', status_code=201)
 async def upload(request: Request, file: UploadFile = File(...), own=Depends(owner)):
     suffix = Path(file.filename or '').suffix.lower()
     if suffix not in {'.mp3','.wav','.m4a','.mp4','.webm','.ogg','.flac','.aac','.mov','.mkv','.opus'}:
@@ -305,7 +386,7 @@ def youtube_url(value):
         raise HTTPException(400, 'Link de vídeo do YouTube inválido. Playlists não são aceitas.')
     return 'https://www.youtube.com/watch?v=' + video
 
-@app.post('/api/jobs/youtube', status_code=201, dependencies=[Depends(admit)])
+@app.post('/api/jobs/youtube', status_code=201)
 def youtube(link: Link, request: Request, own=Depends(owner)):
     url = youtube_url(link.url)
     with db() as c:
@@ -350,7 +431,7 @@ def dashboard():
 def admin_job(r):
     return {k:r[k] for k in ('id','title','status','outcome','created','started','finished','expires','heartbeat',
         'client_tag','network_tag','ui_language','priority','stage','attempts','worker','model','device','compute',
-        'duration','elapsed','cpu_seconds','peak_rss_mb','peak_vram_mb','input_bytes','language','error','model_revision','runtime','progress')}
+        'duration','elapsed','cpu_seconds','peak_rss_mb','peak_vram_mb','input_bytes','language','error','model_revision','runtime','progress','result_state','purged_at','purge_attempts','purge_retry_at','purge_error')}
 
 @app.get('/api/admin/history',dependencies=[Depends(admin)])
 def history(period: str='day'):
@@ -466,31 +547,58 @@ class Heartbeat(BaseModel):
 @app.post('/api/worker/{jid}/heartbeat', dependencies=[Depends(worker)])
 def heartbeat(jid: str, h: Heartbeat):
     with db() as c:
+        c.execute('BEGIN IMMEDIATE')
         r = leased(c,jid,h.lease)
-        if r['stage']!=h.stage: obs.event(c,jid,'stage',r['worker'],{'stage':h.stage})
-        c.execute('UPDATE jobs SET heartbeat=?,progress=?,stage=? WHERE id=?',(time.time(),h.progress,h.stage,jid))
-        c.execute('UPDATE workers SET seen=? WHERE id=?',(time.time(),r['worker']))
+        now = time.time()
+        changed = c.execute("""UPDATE jobs SET heartbeat=?,progress=?,stage=?
+                               WHERE id=? AND lease=? AND status='running' AND expires>?""",
+                            (now,h.progress,h.stage,jid,h.lease,now))
+        if changed.rowcount != 1:
+            raise HTTPException(409,'Lease expirado.')
+        if r['stage'] != h.stage:
+            obs.event(c,jid,'stage',r['worker'],{'stage':h.stage})
+        c.execute('UPDATE workers SET seen=? WHERE id=?',(now,r['worker']))
     return {'ok':True}
 
 class Segment(BaseModel):
-    start: float = Field(ge=0,le=7200)
-    end: float = Field(ge=0,le=7200)
+    start: float = Field(ge=0,le=7200,allow_inf_nan=False)
+    end: float = Field(ge=0,le=7200,allow_inf_nan=False)
     text: str = Field(max_length=10000)
 
 class Result(BaseModel):
     lease: str
     segments: list[Segment] = Field(default_factory=list,max_length=30000)
     language: str = Field(default='',max_length=20)
-    duration: float = Field(default=0,ge=0,le=7200)
-    elapsed: float = Field(default=0,ge=0)
-    cpu_seconds: float = Field(default=0,ge=0)
-    peak_rss_mb: float = Field(default=0,ge=0)
-    peak_vram_mb: float = Field(default=0,ge=0)
+    duration: float = Field(default=0,ge=0,le=7200,allow_inf_nan=False)
+    elapsed: float = Field(default=0,ge=0,allow_inf_nan=False)
+    cpu_seconds: float = Field(default=0,ge=0,allow_inf_nan=False)
+    peak_rss_mb: float = Field(default=0,ge=0,allow_inf_nan=False)
+    peak_vram_mb: float = Field(default=0,ge=0,allow_inf_nan=False)
     input_bytes: int = Field(default=0,ge=0)
     error: str | None = Field(default=None,max_length=500)
     runtime: dict = Field(default_factory=dict)
     model_revision: str | None = Field(default=None,max_length=80)
     title: str | None = Field(default=None,max_length=180)
+    result_state: str = Field(default='unknown',pattern='^(unknown|complete|silence|partial)$')
+
+    @model_validator(mode='after')
+    def chronology(self):
+        if self.error and self.segments:
+            raise ValueError('Erro não pode conter segmentos publicados.')
+        previous = -1.0
+        for segment in self.segments:
+            if segment.end < segment.start:
+                raise ValueError('Segmento com intervalo invertido.')
+            if segment.start + 1e-6 < previous:
+                raise ValueError('Segmentos fora da ordem cronológica.')
+            if self.duration == 0 or segment.end > self.duration + 0.5:
+                raise ValueError('Segmento além da duração declarada.')
+            previous = segment.start  # legitimate overlapping speech is preserved
+        if self.result_state == 'silence' and self.segments:
+            raise ValueError('Silêncio não pode conter segmentos.')
+        if self.result_state in ('complete','partial') and not self.segments and not self.error:
+            raise ValueError('Resultado vazio exige estado silêncio ou desconhecido.')
+        return self
 
 def timestamp(n):
     ms = int(n*1000)
@@ -498,24 +606,45 @@ def timestamp(n):
 
 @app.post('/api/worker/{jid}/result', dependencies=[Depends(worker)])
 def result(jid: str, result: Result):
+    canonical = json.dumps(result.model_dump(),sort_keys=True,ensure_ascii=False,separators=(',',':'),allow_nan=False)
+    receipt = hashlib.sha256(canonical.encode('utf-8')).hexdigest()
+    lease_hash = hashlib.sha256(result.lease.encode()).hexdigest()
     with db() as c:
         c.execute('BEGIN IMMEDIATE')
+        previous = c.execute('SELECT status,expires,receipt_hash,receipt_lease FROM jobs WHERE id=?',(jid,)).fetchone()
+        if previous and previous['expires']>time.time() and previous['status'] in ('done','failed'):
+            if previous['receipt_hash']==receipt and previous['receipt_lease']==lease_hash:
+                return {'ok':True,'receipt':receipt,'duplicate':True}
+            raise HTTPException(409,'Tentativa concluída com resultado diferente.')
         r = leased(c,jid,result.lease)
         if not result.error:
             folder = BLOB / jid
             folder.mkdir(exist_ok=True)
             text = '\n'.join(s.text.strip() for s in result.segments)
-            (folder/'transcript.txt').write_text(text,encoding='utf-8')
-            (folder/'transcript.md').write_text('# Transcrição\n\n'+text,encoding='utf-8')
-            (folder/'transcript.srt').write_text('\n\n'.join(f'{i}\n{timestamp(s.start)} --> {timestamp(s.end)}\n{s.text.strip()}' for i,s in enumerate(result.segments,1)),encoding='utf-8')
-            (folder/'transcript.json').write_text(json.dumps(dict(language=result.language,duration=result.duration,model=r['model'],segments=[s.model_dump() for s in result.segments]),ensure_ascii=False),encoding='utf-8')
-        c.execute('UPDATE jobs SET status=?,finished=?,duration=?,elapsed=?,cpu_seconds=?,peak_rss_mb=?,peak_vram_mb=?,language=?,error=?,progress=?,lease=NULL,input_bytes=max(input_bytes,?) WHERE id=?', ('failed' if result.error else 'done',time.time(),result.duration,result.elapsed,result.cpu_seconds,result.peak_rss_mb,result.peak_vram_mb,result.language,result.error,0 if result.error else 100,result.input_bytes,jid))
-        outcome='failed' if result.error else 'done'
+            exports = {
+                'txt': text,
+                'md': '# Transcrição\n\n' + text,
+                'srt': '\n\n'.join(f'{i}\n{timestamp(s.start)} --> {timestamp(s.end)}\n{s.text.strip()}' for i,s in enumerate(result.segments,1)),
+                'json': json.dumps(dict(schema_version=1,result_state=result.result_state,language=result.language,duration=result.duration,
+                                        model=r['model'],segments=[s.model_dump() for s in result.segments]),ensure_ascii=False)
+            }
+            for fmt, content in exports.items():
+                tmp = folder / ('transcript.' + fmt + '.tmp')
+                tmp.write_text(content,encoding='utf-8')
+                tmp.replace(folder / ('transcript.' + fmt))
+        state = 'failed' if result.error else 'done'
+        outcome = 'failed' if result.error else ('partial' if result.result_state=='partial' else 'done')
+        c.execute("""UPDATE jobs SET status=?,finished=?,duration=?,elapsed=?,cpu_seconds=?,peak_rss_mb=?,
+                   peak_vram_mb=?,language=?,error=?,progress=?,lease=NULL,input_bytes=max(input_bytes,?),
+                   receipt_hash=?,receipt_lease=?,result_state=? WHERE id=? AND lease=? AND status='running'""",
+                  (state,time.time(),result.duration,result.elapsed,result.cpu_seconds,result.peak_rss_mb,
+                   result.peak_vram_mb,result.language,result.error,0 if result.error else 100,result.input_bytes,
+                   receipt,lease_hash,result.result_state,jid,result.lease))
         runtime=json.dumps(result.runtime)
         if len(runtime)>8000: runtime=json.dumps({'metadata_error':'oversized_runtime'})
-        c.execute('UPDATE jobs SET outcome=?,stage=?,runtime=?,model_revision=? WHERE id=?',(outcome,outcome,runtime,result.model_revision,jid))
+        c.execute('UPDATE jobs SET outcome=?,stage=?,runtime=?,model_revision=? WHERE id=?',(outcome,state,runtime,result.model_revision,jid))
         if result.title and r['source']!='upload': c.execute('UPDATE jobs SET title=? WHERE id=?',(result.title,jid))
         obs.event(c,jid,outcome,r['worker'],{'elapsed':result.elapsed})
-    return {'ok':True}
+    return {'ok':True,'receipt':receipt,'duplicate':False}
 
 app.mount('/', StaticFiles(directory=ROOT/'web',html=True),name='web')
