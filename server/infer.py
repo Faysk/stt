@@ -11,6 +11,7 @@ import psutil
 from server.observability import package_versions
 from server.catalog import installed_models
 from server.metrics import make_metrics
+from server.config import getenv
 
 MAX_MEDIA_BYTES = 90 * 1024**2
 MAX_AUDIO_SECONDS = 7200
@@ -109,7 +110,7 @@ def run(config):
         finish_stage('media_probe_s')
         from faster_whisper import WhisperModel
         progress('loading')
-        model_root=os.getenv('TTS_MODELS',str(Path(__file__).resolve().parents[1]/'models'))
+        model_root=getenv('TTS_MODELS',str(Path(__file__).resolve().parents[1]/'models'))
         model=WhisperModel(job['model'],device=job['device'],compute_type=job['compute'],cpu_threads=8,download_root=model_root)
         finish_stage('model_load_s')
         revisions={m['id']:m['revision'] for m in installed_models(model_root)}
