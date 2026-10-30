@@ -181,3 +181,22 @@
   .admin-page .model-card,.admin-page .worker-card,.admin-page .choice-card {transition:none!important;transform:none!important}
   .admin-page .badge.working:before,.admin-page .button.is-loading:before {animation:none!important}
 }
+
+.admin-page .skeleton-row td {padding:14px 9px}
+.admin-page .skeleton-bar {
+  display:block;width:100%;height:14px;border-radius:5px;
+  background:linear-gradient(105deg,#202e42 25%,#2c3e57 44%,#202e42 66%);
+  background-size:220% 100%;
+  animation:stt-admin-shimmer 1.5s ease-in-out infinite;
+}
+.admin-page .skeleton-row:nth-child(2n) .skeleton-bar {width:85%}
+.admin-page .skeleton-row:nth-child(3n) .skeleton-bar {width:68%}
+.admin-page .is-fetching > .section-heading::after {
+  content:'';width:10px;height:10px;flex:0 0 10px;
+  border:2px solid #7fb9f7;border-top-color:transparent;
+  border-radius:50%;animation:stt-admin-spin 1s linear infinite;
+}
+@keyframes stt-admin-shimmer {to {background-position-x:-220%}}
+@media(prefers-reduced-motion:reduce) {
+  .admin-page .skeleton-bar,.admin-page .is-fetching > .section-heading::after {animation:none!important}
+}
