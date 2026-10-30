@@ -3,7 +3,7 @@
   "main": "edge/worker.js",
   "compatibility_date": "2026-10-30",
   "assets": { "directory": "./web", "binding": "ASSETS", "html_handling": "none", "run_worker_first": ["/api/*"] },
-  "vars": { "ORIGIN": "https://tts-origin.faysk.dev" },
+  "vars": { "ORIGIN": "https://stt-origin.faysk.dev" },
   "routes": [{ "pattern": "stt.faysk.dev", "custom_domain": true }],
   "observability": { "enabled": false }
 }
