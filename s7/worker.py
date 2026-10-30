@@ -24,6 +24,10 @@ from urllib.parse import urlsplit
 from urllib.request import build_opener, HTTPRedirectHandler, ProxyHandler, Request
 
 ID = "s7-edge"
+# Cloudflare currently rejects urllib's default Python-urllib User-Agent (403),
+# but accepts this exact value with the same scoped worker key (200).
+# User-Agent is not authorization; x-worker-key and edge protection still apply.
+CLIENT_USER_AGENT = "Mozilla/5.0"
 MAX_BYTES = 8 * 1024 * 1024
 MAX_SECONDS = 120
 SLEEP_SECONDS = 5
@@ -90,7 +94,8 @@ def post(cfg,path,payload,timeout=30):
 def call(cfg,path,method,body=None,timeout=30,extra_headers=None):
     if not path.startswith("/api/worker/") or ".." in path or "?" in path:
         raise WorkerError("Invalid API route")
-    headers={"x-worker-key":cfg["key"],"accept":"application/json"}
+    headers={"x-worker-key":cfg["key"],"accept":"application/json",
+             "user-agent":CLIENT_USER_AGENT}
     if body is not None: headers["content-type"]="application/json"
     if extra_headers: headers.update(extra_headers)
     request=Request(cfg["url"]+path,data=body,headers=headers,method=method)
