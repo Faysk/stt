@@ -86,6 +86,13 @@ def _deliver(path, now=None):
 
 def _drain_outbox():
     OUTBOX.mkdir(parents=True,exist_ok=True)
+    # A crash between fsync and rename can leave a private temporary spool.
+    for temp in OUTBOX.glob('*.tmp'):
+        try:
+            if time.time()-temp.stat().st_mtime>86400:
+                temp.unlink(missing_ok=True)
+        except OSError:
+            pass
     pending = False
     for path in sorted(OUTBOX.glob('*.json')):
         try:
