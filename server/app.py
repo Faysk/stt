@@ -71,7 +71,7 @@ def init():
             'priority':'INTEGER DEFAULT 0','outcome':'TEXT','runtime':'TEXT',
             'model_revision':'TEXT','stage':"TEXT DEFAULT 'queued'",
             'purged_at':'REAL','purge_retry_at':'REAL DEFAULT 0','purge_attempts':'INTEGER DEFAULT 0',
-            'purge_error':'TEXT','receipt_hash':'TEXT','receipt_lease':'TEXT','result_state':'TEXT','metrics_json':'TEXT','engine':'TEXT'}.items():
+            'purge_error':'TEXT','receipt_hash':'TEXT','receipt_lease':'TEXT','result_state':'TEXT','metrics_json':'TEXT','engine':'TEXT','timing':"TEXT DEFAULT 'segments'"}.items():
             if name not in columns: c.execute(f'ALTER TABLE jobs ADD COLUMN {name} {definition}')
         c.execute("UPDATE jobs SET outcome=status WHERE outcome IS NULL AND status IN ('done','failed','cancelled')")
         c.execute("UPDATE jobs SET stage=status WHERE stage='queued' AND status IN ('done','failed','expired','cancelled')")
@@ -270,7 +270,7 @@ def client_tag(own):
     return hmac.new(os.getenv('TTS_ADMIN_KEY','local').encode(),own.encode(),'sha256').hexdigest()[:16]
 
 def public(r):
-    result={k:r[k] for k in ('id','title','status','created','expires','started','finished','error','duration','elapsed','language','progress','stage')}
+    result={k:r[k] for k in ('id','title','status','created','expires','started','finished','error','duration','elapsed','language','progress','stage','timing','result_state')}
     if r['status']=='queued':
         with db() as c:
             result['position']=1+c.execute("SELECT count(*) FROM jobs WHERE status='queued' AND expires>? AND (priority>? OR (priority=? AND (created<? OR (created=? AND id<?))))",(time.time(),r['priority'],r['priority'],r['created'],r['created'],r['id'])).fetchone()[0]
@@ -436,7 +436,7 @@ def dashboard():
 def admin_job(r):
     data = {k:r[k] for k in ('id','title','status','outcome','created','started','finished','expires','heartbeat',
         'client_tag','network_tag','ui_language','priority','stage','attempts','worker','model','device','compute',
-        'duration','elapsed','cpu_seconds','peak_rss_mb','peak_vram_mb','input_bytes','language','error','model_revision','runtime','engine','progress','result_state','purged_at','purge_attempts','purge_retry_at','purge_error')}
+        'duration','elapsed','cpu_seconds','peak_rss_mb','peak_vram_mb','input_bytes','language','error','model_revision','runtime','engine','progress','timing','result_state','purged_at','purge_attempts','purge_retry_at','purge_error')}
     data['metrics'] = json.loads(r['metrics_json']) if r['metrics_json'] else None
     return data
 
@@ -660,10 +660,10 @@ def result(jid: str, result: Result):
         outcome = 'failed' if result.error else ('partial' if result.result_state=='partial' else 'done')
         c.execute("""UPDATE jobs SET status=?,finished=?,duration=?,elapsed=?,cpu_seconds=?,peak_rss_mb=?,
                    peak_vram_mb=?,language=?,error=?,progress=?,lease=NULL,input_bytes=max(input_bytes,?),
-                   receipt_hash=?,receipt_lease=?,result_state=? WHERE id=? AND lease=? AND status='running'""",
+                   receipt_hash=?,receipt_lease=?,result_state=?,timing=? WHERE id=? AND lease=? AND status='running'""",
                   (state,time.time(),result.duration,result.elapsed,result.cpu_seconds,result.peak_rss_mb,
                    result.peak_vram_mb,result.language,result.error,0 if result.error else 100,result.input_bytes,
-                   receipt,lease_hash,result.result_state,jid,result.lease))
+                   receipt,lease_hash,result.result_state,result.timing,jid,result.lease))
         runtime=json.dumps(result.runtime)
         if len(runtime)>8000: runtime=json.dumps({'metadata_error':'oversized_runtime'})
         c.execute('UPDATE jobs SET outcome=?,stage=?,runtime=?,model_revision=?,metrics_json=? WHERE id=?',
