@@ -76,9 +76,19 @@ def _deliver(path, now=None):
             data['last_status']=409
             _atomic_json(path,data)
             return 'stale'
-        # Permanent client errors cannot be repaired by retrying identical bytes.
-        # Preserve the private payload for operator diagnosis, but do not starve
-        # the entire worker queue for the remainder of the job's 24h TTL.
+        # Authentication errors are not malformed transcripts. A rotated or
+        # misconfigured key can be repaired by the operator: preserve the
+        # payload, back off and STOP claiming fresh work until API auth works.
+        # Otherwise jobs would repeatedly fail while secrets are being fixed.
+        if response.status_code in (401,403):
+            data['attempts'] += 1
+            data['last_status'] = response.status_code
+            data['retry_at'] = now + min(60, 2 ** min(data['attempts'], 6))
+            _atomic_json(path, data)
+            print(f"Delivery {data['id']}: API authentication denied; worker paused",flush=True)
+            return 'auth_blocked'
+        # Other permanent client errors cannot be repaired by retrying
+        # identical bytes. Keep the private payload for operator diagnosis.
         transient = response.status_code in (408,425,429) or response.status_code>=500
         if response.status_code>=300 and not transient:
             data['dead_letter']=True
@@ -125,7 +135,7 @@ def _drain_outbox():
     for path in sorted(OUTBOX.glob('*.json')):
         try:
             status = _deliver(path)
-            if status == 'pending': pending = True
+            if status in ('pending', 'auth_blocked'): pending = True
         except (ValueError,OSError,KeyError,TypeError) as exc:
             # Unreadable JSON cannot yield its original expires timestamp.
             # Keep it for at least a complete 24-hour retention cycle, then
