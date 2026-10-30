@@ -30,7 +30,9 @@
 5. **Benchmark fora da fila pública:** WAV PT-BR conhecido, modelo leve, WER/CER, tempo por minuto de áudio (RTF), RSS pico, throttling, temperatura e impacto na coleta do observatório. Aplicar limites e política de retenção do STT e validar outbox/heartbeat/lease/retries antes de qualquer worker público.
 6. **Ativação:** só selecionar `s7-edge` depois que um worker real `STT_WORKER_ID=s7-edge` estiver online e anunciar o modelo preparado e compute CPU suportado. Aprovação operacional separada antes de aceitar empregos públicos.
 
-[Pré-teste de compatibilidade Termux somente leitura](S7_STT_READONLY_PREFLIGHT.md).\n\n## Checklist de evidências adicionais
+[Pré-teste de compatibilidade Termux somente leitura](S7_STT_READONLY_PREFLIGHT.md).
+
+## Checklist de evidências adicionais
 
 - [x] Localização do frontend e backend de telemetria; referências versionadas.
 - [x] Homologação funcional em LAN no S7 e dados históricos de espaço.
