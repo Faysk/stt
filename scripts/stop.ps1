@@ -1,3 +1,6 @@
+[CmdletBinding()]
+param([switch]$PreserveTunnel)
+
 $ErrorActionPreference = 'Stop'
 $projectPath = (Resolve-Path -LiteralPath (Split-Path $PSScriptRoot -Parent)).Path
 $runtime = Join-Path $projectPath '.venv\Scripts\python.exe'
@@ -8,7 +11,7 @@ if (Test-Path -LiteralPath $pidFile) {
     $ids += @($saved.api, $saved.worker)
 }
 $tunnelFile = Join-Path $projectPath 'logs\tunnel.pid'
-if (Test-Path -LiteralPath $tunnelFile) { $ids += [int](Get-Content -LiteralPath $tunnelFile) }
+if (-not $PreserveTunnel -and (Test-Path -LiteralPath $tunnelFile)) { $ids += [int](Get-Content -LiteralPath $tunnelFile) }
 
 function Stop-OwnedTree([int]$RootPid) {
     $root = Get-CimInstance Win32_Process -Filter "ProcessId=$RootPid" -ErrorAction SilentlyContinue
@@ -42,3 +45,4 @@ function Stop-OwnedTree([int]$RootPid) {
 }
 foreach ($id in ($ids | Where-Object { $_ -match '^\d+$' } | Sort-Object -Unique)) { Stop-OwnedTree -RootPid ([int]$id) }
 Write-Output 'Processos verificados deste projeto encerrados. Resultados pendentes na outbox foram preservados.'
+if ($PreserveTunnel) { Write-Output 'STT_TUNNEL_PRESERVED: Tunnel excluded from stop; no connector processes touched.' }
