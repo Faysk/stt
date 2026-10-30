@@ -142,6 +142,13 @@
     if ($('worker').value !== id) {
       $('worker').value = id;
       markDirty();
+      const info = workerInfo();
+      if ($('device').value === 'cuda' &&
+          (!info.gpu || !(info.compute_types?.cuda || []).length)) {
+        $('device').value = 'cpu';
+        $('settings-message').textContent = 'CUDA indisponível no executor escolhido; seleção ajustada para CPU.';
+      }
+      precision();
     }
     rerender();
   }
