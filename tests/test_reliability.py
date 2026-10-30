@@ -278,3 +278,68 @@ def test_qwen_configuration_requires_worker_capability(lab):
                   'info':{'qwen_models':['qwen-fast']}})
     job=ready.json()['job']
     assert job['id']==jid and job['engine']=='qwen3' and job['language_hint']=='auto'
+
+
+def test_heartbeat_and_requeue_are_serialized(lab,monkeypatch):
+    c,m=lab
+    jid=submit(c)
+    current=claim(c)
+    with m.db() as d:
+        d.execute('UPDATE jobs SET heartbeat=? WHERE id=?',(time.time()-181,jid))
+    entered=threading.Event()
+    resume=threading.Event()
+    maintenance_done=threading.Event()
+    original=m.leased
+    results=[]
+    def paused(c,key,lease):
+        row=original(c,key,lease)
+        if threading.current_thread().name=='heartbeat-race':
+            entered.set()
+            assert resume.wait(5)
+        return row
+    monkeypatch.setattr(m,'leased',paused)
+    heartbeat_thread=threading.Thread(name='heartbeat-race',
+        target=lambda:results.append(m.heartbeat(jid,m.Heartbeat(
+            lease=current['lease'],stage='transcribing',progress=83))))
+    hb_error=[]
+    def maintenance_thread():
+        try: m.maintenance()
+        except Exception as exc: hb_error.append(exc)
+        finally: maintenance_done.set()
+    heartbeat_thread.start()
+    assert entered.wait(5)
+    janitor=threading.Thread(target=maintenance_thread)
+    janitor.start()
+    try:
+        # While heartbeat holds BEGIN IMMEDIATE, maintenance cannot take
+        # an inconsistent snapshot and requeue the old lease.
+        assert not maintenance_done.wait(0.1)
+    finally:
+        resume.set()
+        heartbeat_thread.join(5)
+        janitor.join(5)
+    assert not hb_error and maintenance_done.is_set()
+    assert results==[{'ok':True}]
+    with m.db() as d:
+        row=d.execute('SELECT status,lease,stage,progress FROM jobs WHERE id=?',(jid,)).fetchone()
+    assert row['status']=='running' and row['lease']==current['lease']
+    assert row['stage']=='transcribing' and row['progress']==83
+
+def test_purge_does_not_follow_foreign_symlink(lab,tmp_path):
+    c,m=lab
+    jid=submit(c)
+    folder=m.BLOB/jid
+    import shutil
+    shutil.rmtree(folder)
+    foreign=tmp_path/'sentinel'
+    foreign.mkdir()
+    (foreign/'keep.txt').write_text('private')
+    folder.symlink_to(foreign,target_is_directory=True)
+    with m.db() as d:
+        d.execute('UPDATE jobs SET expires=? WHERE id=?',(time.time()-1,jid))
+    m.maintenance()
+    assert (foreign/'keep.txt').read_text()=='private'
+    assert c.get('/api/jobs/'+jid,headers=SESSION).status_code==404
+    with m.db() as d:
+        row=d.execute('SELECT purged_at,purge_error FROM jobs WHERE id=?',(jid,)).fetchone()
+    assert row['purged_at'] is None and row['purge_error']=='OSError'
