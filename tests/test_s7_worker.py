@@ -116,3 +116,27 @@ def test_s7_key_file_rejects_world_readable(tmp_path,monkeypatch):
     cfg=w.config_from_environment()
     assert cfg["key"]=="k"*64
     assert cfg["work"].stat().st_mode & 0o077==0
+
+def test_s7_can_run_as_secondary_alongside_primary(tmp_path,monkeypatch):
+    module=api(tmp_path,monkeypatch)
+    monkeypatch.setenv("STT_S7_ENABLED","1")
+    monkeypatch.setenv("STT_S7_SIDE_WORKER","1")
+    with TestClient(module.app) as c:
+        now=__import__("time").time()
+        with module.db() as d:
+            for title,priority in (("speech.wav",9),("recording.mp4",8)):
+                d.execute("""INSERT INTO jobs(id,owner,title,source,status,created,expires,
+                           input_bytes,priority) VALUES(?,?,?,?,?,?,?,?,?)""",
+                          (title.replace(".","-"),"owner",title,"upload","queued",
+                           now,now+7200,2048,priority))
+        # Settings remain pointing at notebook, model small, CPU int8.
+        assert c.get("/api/admin",headers=ADMIN).json()["settings"]["worker"]=="notebook"
+        assert c.post("/api/worker/claim",headers=S7,
+                      json={"id":"s7-edge","info":CAPS}).json()["job"]["id"]=="speech-wav"
+        primary=c.post("/api/worker/claim",headers=MASTER,json={"id":"notebook","info":{}})
+        assert primary.status_code==200
+        assert primary.json()["job"]["id"]=="recording-mp4"
+        assert primary.json()["job"]["model"]=="small"
+        admin=c.get("/api/admin",headers=ADMIN).json()
+        assert admin["s7_side_worker"] is True
+        assert {x["worker"] for x in admin["jobs"]}=={"s7-edge","notebook"}
