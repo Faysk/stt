@@ -104,6 +104,12 @@ def iter_windows(path, av, np, seconds=WINDOW_SECONDS):
     if consumed<=0: raise EngineError('QWEN_AUDIO_EMPTY')
     if consumed>MAX_AUDIO_SAMPLES: raise EngineError('QWEN_DURATION_EXCEEDED')
 
+def enforce_download_progress(data):
+    """yt-dlp callback: cap actual received bytes, not just declared metadata."""
+    if data.get('downloaded_bytes',0) > MAX_MEDIA_BYTES:
+        raise EngineError('QWEN_DOWNLOAD_TOO_LARGE')
+
+
 def _near_digital_silence(np,audio):
     if not np.isfinite(audio).all() or audio.size==0:
         raise EngineError('QWEN_SIGNAL_INVALID')
@@ -172,12 +178,9 @@ def run(config):
             import yt_dlp
             _progress(folder,'downloading',0)
             t=time.perf_counter()
-            def limit_download(data):
-                if data.get('downloaded_bytes',0) > MAX_MEDIA_BYTES:
-                    raise EngineError('QWEN_DOWNLOAD_TOO_LARGE')
             with yt_dlp.YoutubeDL({'format':'bestaudio/best','noplaylist':True,
                     'outtmpl':str(media),'max_filesize':MAX_MEDIA_BYTES,'quiet':True,
-                    'socket_timeout':30,'retries':2,'progress_hooks':[limit_download],
+                    'socket_timeout':30,'retries':2,'progress_hooks':[enforce_download_progress],
                     'match_filter':lambda info,**kwargs:
                     'Duration >2h or livestream' if (info.get('duration') or 0)>7200 or info.get('is_live') else None}) as ydl:
                 ydl.extract_info(job['source'],download=True)
