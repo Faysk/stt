@@ -101,3 +101,30 @@ Achados de auditoria não significam correções implementadas. O relatório dis
 **Importante:** a aprovação da CI valida mocks e testes isolados. Não implica
 deploy, ensaio com GPU, teste do Cloudflare em produção ou validação de
 `taskkill` com árvore de processos reais.
+
+
+## Diagnóstico seguro de resultados e autenticação (PR #30)
+
+Na entrega de resultados, **401/403** indica que a autenticação entre o worker,
+o Edge e a API foi recusada (por exemplo, após uma rotação de credencial).
+Isso **não** significa que o áudio ou a transcrição estejam inválidos. O
+worker preserva a outbox, executa backoff e **não busca novos trabalhos**
+enquanto houver resultado pendente sem autenticação válida. Verifique
+privadamente as configurações `STT_WORKER_KEY`/`TTS_WORKER_KEY` e, quando
+houver Edge, `STT_EDGE_KEY`/`TTS_EDGE_KEY` nos componentes envolvidos.
+Depois de corrigir, reinicie o worker de forma controlada. Nunca coloque
+segredos, payloads da outbox, áudio ou texto transcrito numa issue.
+
+HTTP **422** na publicação é diferente: o payload não respeitou o contrato
+do resultado. Ele é preservado em *dead-letter* privada para diagnóstico e
+não impede novos trabalhos. HTTP **409** é conflito de lease/recibo;
+não reenviar um resultado em nome de outro lease. Falhas transitórias, como
+timeout ou HTTP 503, mantêm retry com backoff e recibo idempotente.
+A expiração de 24h continua sendo respeitada mesmo quando há falha de
+publicação.
+
+Uploads maiores do que **90 MiB**, inclusive transferidos em partes sem
+`Content-Length`, devem responder **413**. Respostas antecipadas e respostas
+de erro do proxy usam `Cache-Control: no-store`, `noindex` e cabeçalhos de
+segurança. O CI verifica esses casos com fluxos sintéticos, mas ainda falta
+ensaio real em Windows/Cloudflare, documentado na issue #28.
