@@ -213,3 +213,18 @@
 .admin-page .config-advanced summary {cursor:pointer;color:#93b8e6;font-size:11px;outline-offset:4px}
 .admin-page .config-advanced[open] summary {margin-bottom:14px}
 .admin-page .config-advanced summary:focus-visible {outline:2px solid #73b0ff}
+
+.admin-page td.rtf-fast {color:#8ad7b3;font-weight:650}
+.admin-page td.rtf-slow {color:#e8b776;font-weight:650}
+.admin-page .pipeline-stages {
+  display:grid;
+  grid-template-columns:repeat(auto-fit,minmax(150px,1fr));
+  gap:9px;margin:12px 0 10px;
+}
+.admin-page .pipeline-stage {
+  border:1px solid #33445b;border-radius:7px;
+  background:#101927;padding:12px;
+  display:flex;flex-direction:column;gap:7px;
+}
+.admin-page .pipeline-stage span {font-size:11px;color:#96aac9}
+.admin-page .pipeline-stage strong {font:600 13px Consolas,monospace;color:#cde3ff}
