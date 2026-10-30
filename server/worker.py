@@ -334,6 +334,17 @@ def worker_capabilities():
 def prepare_model(op):
     # Disk cache only. Run when no user job is queued; never claim warm VRAM.
     operation=op['id']
+    stop_heartbeat=threading.Event()
+    def preload_heartbeat():
+        while not stop_heartbeat.wait(20):
+            try:
+                response=client.post('/api/worker/model-preloads/'+operation+'/report',
+                                     json={'worker':IDENTITY,'status':'running'})
+                if response.status_code==409: break
+            except httpx.HTTPError:
+                pass
+    heartbeat_thread=threading.Thread(target=preload_heartbeat,daemon=True)
+    heartbeat_thread.start()
     outcome={'worker':IDENTITY,'status':'failed','error':'PRELOAD_FAILED'}
     try:
         from server.catalog import MODEL_CATALOG
@@ -351,6 +362,8 @@ def prepare_model(op):
         _CAPS_CACHE=(0.0,None)
     except Exception as exc:
         outcome['error']='PRELOAD_'+type(exc).__name__.upper()[:60]
+    stop_heartbeat.set()
+    heartbeat_thread.join(timeout=2)
     try:
         reply=client.post('/api/worker/model-preloads/'+operation+'/report',json=outcome)
         reply.raise_for_status()
@@ -359,6 +372,7 @@ def prepare_model(op):
 
 def main():
     print(f'Executor {IDENTITY} conectado a {BASE}',flush=True)
+    preload_thread=None
     while True:
         try:
             if _drain_outbox():
@@ -369,11 +383,15 @@ def main():
             job=r.json()['job']
             if job: execute(job)
             else:
-                preload=client.post('/api/worker/model-preloads/claim',json={'worker':IDENTITY})
-                preload.raise_for_status()
-                operation=preload.json().get('operation')
-                if operation: prepare_model(operation)
-                else: time.sleep(5)
+                if preload_thread is None or not preload_thread.is_alive():
+                    preload=client.post('/api/worker/model-preloads/claim',json={'worker':IDENTITY})
+                    preload.raise_for_status()
+                    operation=preload.json().get('operation')
+                    if operation:
+                        preload_thread=threading.Thread(target=prepare_model,
+                                                        args=(operation,),daemon=True)
+                        preload_thread.start()
+                time.sleep(5)
         except (httpx.HTTPError,ValueError) as e:
             print(f'Conexão: {type(e).__name__}; nova tentativa em 10s',flush=True)
             time.sleep(10)
