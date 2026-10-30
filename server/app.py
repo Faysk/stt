@@ -62,6 +62,7 @@ def init():
           duration REAL, elapsed REAL, cpu_seconds REAL, peak_rss_mb REAL, peak_vram_mb REAL,
           language TEXT, progress REAL DEFAULT 0, attempts INTEGER DEFAULT 0);
         CREATE INDEX IF NOT EXISTS jobs_owner ON jobs(owner, created);
+        CREATE INDEX IF NOT EXISTS jobs_expires ON jobs(expires);
         CREATE TABLE IF NOT EXISTS settings (id INTEGER PRIMARY KEY, value TEXT);
         CREATE TABLE IF NOT EXISTS workers (id TEXT PRIMARY KEY, seen REAL, info TEXT);
         CREATE TABLE IF NOT EXISTS admission (client TEXT, created REAL);
