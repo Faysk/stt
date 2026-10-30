@@ -356,7 +356,7 @@ def prepare_model(op):
     outcome={'worker':IDENTITY,'status':'failed','error':'PRELOAD_FAILED'}
     try:
         from server.catalog import MODEL_CATALOG
-        from huggingface_hub import snapshot_download
+        from huggingface_hub import HfApi, snapshot_download
         repository=next(item['repository'] for item in MODEL_CATALOG if item['id']==op['model'])
         root=Path(getenv('STT_MODELS',str(ROOT/'models'))).resolve()
         root.mkdir(parents=True,exist_ok=True)
@@ -365,7 +365,11 @@ def prepare_model(op):
                       'large-v3':6000,'turbo':3800}.get(op['model'],6000)
         if shutil.disk_usage(root).free < (estimated_mb+2048)*1024**2:
             raise OSError('Insufficient free disk space for model cache')
-        snapshot=Path(snapshot_download(repo_id=repository,cache_dir=str(root),max_workers=2,
+        # Resolve the trusted catalog's main reference once and pin immutable bytes for this operation.
+        revision=HfApi().model_info(repo_id=repository,revision='main').sha
+        if not revision or len(revision)!=40 or any(ch not in '0123456789abcdef' for ch in revision):
+            raise ValueError('Invalid model revision returned from hub')
+        snapshot=Path(snapshot_download(repo_id=repository,revision=revision,cache_dir=str(root),max_workers=2,
                      allow_patterns=['config.json','model.bin','tokenizer.json',
                                      'vocabulary.*','preprocessor_config.json']))
         if not (snapshot/'model.bin').is_file() or not (snapshot/'config.json').is_file():
