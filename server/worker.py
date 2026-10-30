@@ -122,6 +122,27 @@ def _stop_child(proc):
             else: proc.kill()
         except (OSError,AttributeError): pass
 
+def _qwen_models():
+    runtime = os.getenv('TTS_QWEN_PYTHON','')
+    if not runtime or not Path(runtime).is_file():
+        return []
+    if Path(runtime).resolve() == Path(sys.executable).resolve():
+        return []  # Never mix Qwen's runtime into the Whisper environment.
+    from server.qwen_engine import prepared_models
+    return prepared_models()
+
+def _engine_command(job,config):
+    if job.get('engine','whisper') == 'whisper':
+        return [sys.executable,'-m','server.infer',str(config)]
+    if job['engine'] == 'qwen3':
+        runtime = os.getenv('TTS_QWEN_PYTHON','')
+        if not runtime or not Path(runtime).is_file() or Path(runtime).resolve()==Path(sys.executable).resolve():
+            raise RuntimeError('QWEN_RUNTIME_UNAVAILABLE')
+        if job['model'] not in _qwen_models():
+            raise RuntimeError('QWEN_RECIPE_UNAVAILABLE')
+        return [str(Path(runtime).resolve()),'-m','server.qwen_engine',str(config)]
+    raise RuntimeError('ENGINE_UNSUPPORTED')
+
 def execute(job):
     finished = threading.Event()
     lost = threading.Event()
@@ -165,7 +186,7 @@ def execute(job):
                             check_budget()
             check_budget()  # Nothing may spawn after a slow or expired download.
             flags = {'creationflags':subprocess.CREATE_NEW_PROCESS_GROUP} if os.name=='nt' else {'start_new_session':True}
-            proc = subprocess.Popen([sys.executable,'-m','server.infer',str(config)],cwd=ROOT,**flags)
+            proc = subprocess.Popen(_engine_command(job,config),cwd=ROOT,**flags)
             while proc.poll() is None:
                 check_budget()
                 time.sleep(min(1,max(0.01,deadline-time.time())))
@@ -200,7 +221,7 @@ def main():
             if _drain_outbox():
                 time.sleep(5)
                 continue
-            r=client.post('/api/worker/claim',json={'id':IDENTITY,'info':{'system':platform.system(),'machine':platform.machine(),'cpu':os.cpu_count(),'engine':'faster-whisper','versions':package_versions()}})
+            r=client.post('/api/worker/claim',json={'id':IDENTITY,'info':{'system':platform.system(),'machine':platform.machine(),'cpu':os.cpu_count(),'engine':'faster-whisper','qwen_models':_qwen_models(),'versions':package_versions()}})
             r.raise_for_status()
             job=r.json()['job']
             if job: execute(job)
