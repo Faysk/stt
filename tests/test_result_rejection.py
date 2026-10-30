@@ -49,6 +49,11 @@ def test_invalid_result_can_be_failed_immediately_without_reclaim(tmp_path, monk
             f'/api/worker/{job_id}/reject', headers=headers,
             json={'lease':'synthetic-lease','reason':'arbitrary'})
         assert wrong_reason.status_code == 422
+        with_extra = client.post(
+            f'/api/worker/{job_id}/reject', headers=headers,
+            json={'lease':'synthetic-lease','reason':'result_schema_rejected',
+                  'transcription':'must not be accepted'})
+        assert with_extra.status_code == 422
         wrong_lease = client.post(
             f'/api/worker/{job_id}/reject', headers=headers,
             json={'lease':'other','reason':'result_schema_rejected'})
