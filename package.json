@@ -1,1 +1,13 @@
-{"name":"faysk-stt-edge","private":true,"type":"module","scripts":{"deploy":"wrangler deploy","check":"node --check edge/worker.js && node --check web/i18n.js && node --check web/public.js && node --check web/dashboard.js"},"devDependencies":{"wrangler":"^4.0.0"}}
+{
+  "name": "faysk-stt-edge",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "deploy": "node scripts/deploy-stt.mjs",
+    "check": "node --check edge/worker.js && node --check web/i18n.js && node --check web/public.js && node --check web/dashboard.js",
+    "deploy:stt:dry-run": "wrangler deploy --config wrangler.stt.jsonc --dry-run"
+  },
+  "devDependencies": {
+    "wrangler": "^4.0.0"
+  }
+}
