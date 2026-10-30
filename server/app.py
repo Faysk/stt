@@ -203,24 +203,41 @@ async def lifespan(app):
 
 app = FastAPI(title='Faysk Transcription Lab', lifespan=lifespan)
 
+def secure_api_response(response, path):
+    """Apply the same privacy headers to normal and early-rejected responses."""
+    response.headers['Cache-Control'] = 'no-store'
+    response.headers['X-Content-Type-Options'] = 'nosniff'
+    response.headers['Referrer-Policy'] = 'no-referrer'
+    if path.startswith('/api/') or path == '/admin.html':
+        response.headers['X-Robots-Tag'] = 'noindex, nofollow, noarchive'
+    response.headers['Content-Security-Policy'] = (
+        "default-src 'self'; style-src 'self'; script-src 'self'; "
+        "img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; "
+        "base-uri 'none'; form-action 'self'")
+    return response
+
+
 @app.middleware('http')
 async def guard(request: Request, call_next):
+    def denied(detail, status):
+        return secure_api_response(JSONResponse({'detail':detail}, status_code=status),
+                                   request.url.path)
     length = request.headers.get('content-length')
     if length and (not length.isdecimal() or int(length)>MAX_BYTES+1024*1024):
-        return JSONResponse({'detail':'Limite de 90 MB por arquivo.'}, status_code=413)
+        return denied('Limite de 90 MB por arquivo.', 413)
     if getenv('TTS_REQUIRE_EDGE') == '1':
         key = getenv('TTS_EDGE_KEY', '')
         if not key or not hmac.compare_digest(request.headers.get('x-edge-key', ''), key):
-            return JSONResponse({'detail':'Origem não autorizada.'}, status_code=403)
+            return denied('Origem não autorizada.', 403)
     if request.url.path in ('/api/jobs/upload','/api/jobs/youtube') and request.method=='POST':
         token=request.headers.get('x-session-key','')
         if len(token)!=64 or any(ch not in '0123456789abcdef' for ch in token):
-            return JSONResponse({'detail':'Sessão inválida.'},status_code=401)
+            return denied('Sessão inválida.', 401)
     slot = None
     try:
         slot = preflight(request)
     except HTTPException as exc:
-        return JSONResponse({'detail':exc.detail},status_code=exc.status_code)
+        return denied(exc.detail, exc.status_code)
     request.state.upload_slot = slot
     try:
         response = await call_next(request)
@@ -228,13 +245,7 @@ async def guard(request: Request, call_next):
         if slot:
             with db() as c:
                 c.execute('DELETE FROM upload_slots WHERE id=?',(slot,))
-    response.headers['Cache-Control'] = 'no-store'
-    response.headers['X-Content-Type-Options'] = 'nosniff'
-    response.headers['Referrer-Policy'] = 'no-referrer'
-    if request.url.path.startswith('/api/') or request.url.path=='/admin.html':
-        response.headers['X-Robots-Tag']='noindex, nofollow, noarchive'
-    response.headers['Content-Security-Policy'] = "default-src 'self'; style-src 'self'; script-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
-    return response
+    return secure_api_response(response, request.url.path)
 
 def secret(request, env, header):
     expected = getenv(env, '')
