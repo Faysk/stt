@@ -133,7 +133,7 @@ def test_streamed_body_without_content_length_returns_413(tmp_path,monkeypatch):
         monkeypatch.setattr(module,'MAX_BYTES',64)
 
         def chunks():
-            yield b'0'*128
+            yield b'0'*(1024*1024+128)
             yield b'1'*128
 
         with TestClient(module.app,raise_server_exceptions=False) as client:
