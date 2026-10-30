@@ -494,7 +494,14 @@ def _publish_generation(folder, receipt, exports):
     reused only when all files match the same canonical receipt.
     """
     root = folder / 'results'
+    if folder.is_symlink() or root.is_symlink():
+        raise OSError('Unsafe result storage directory')
+    created = not root.is_dir()
     root.mkdir(exist_ok=True)
+    if created:
+        # The new results directory entry must survive a power failure before
+        # SQLite can commit a pointer to a generation inside it.
+        _fsync_directory(folder)
     target = root / receipt
     if target.exists():
         if target.is_symlink() or not target.is_dir():
