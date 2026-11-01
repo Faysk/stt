@@ -70,8 +70,9 @@ def cleanup(c, now=None):
     now = time.time() if now is None else now
     c.execute("UPDATE admin_auth_requests SET state='expired' WHERE expires<=? AND state IN ('pending','scanned','approved')", (now,))
     c.execute('DELETE FROM admin_auth_requests WHERE expires<?', (now - 600,))
-    for table in ('pairing', 'challenges', 'rates'):
-        c.execute(f'DELETE FROM admin_auth_{table} WHERE expires<=?', (now,))
+    c.execute('DELETE FROM admin_auth_pairing WHERE expires<=?', (now,))
+    c.execute('DELETE FROM admin_auth_challenges WHERE expires<=?', (now,))
+    c.execute('DELETE FROM admin_auth_rates WHERE expires<=?', (now,))
     c.execute('DELETE FROM admin_auth_sessions WHERE expires<=? OR seen<=?', (now, now-IDLE_TTL))
     c.execute('DELETE FROM admin_auth_events WHERE at<?', (now-30*86400,))
 
@@ -164,6 +165,15 @@ def authorize(request, db, getenv):
     request.state.admin_credential = row['credential_id']
 
 
+def revoke_all(c):
+    """Called only from local recovery/revocation inside an explicit transaction."""
+    c.execute('DELETE FROM admin_auth_credentials')
+    c.execute('DELETE FROM admin_auth_sessions')
+    c.execute('DELETE FROM admin_auth_requests')
+    c.execute('DELETE FROM admin_auth_challenges')
+    c.execute('DELETE FROM admin_auth_pairing')
+
+
 def new_pairing(db, recover=False):
     """Local CLI only. Recover revokes all credentials, sessions and open requests."""
     token = secrets.token_urlsafe(32)
@@ -172,8 +182,7 @@ def new_pairing(db, recover=False):
         if c.execute('SELECT 1 FROM admin_auth_credentials').fetchone() and not recover:
             raise ValueError('Já existe passkey. Use recuperação local explícita.')
         if recover:
-            for table in ('credentials', 'sessions', 'requests', 'challenges'):
-                c.execute(f'DELETE FROM admin_auth_{table}')
+            revoke_all(c)
             event(c, 'local_recovery')
         c.execute('DELETE FROM admin_auth_pairing')
         c.execute('INSERT INTO admin_auth_pairing VALUES(?,?)', (digest(token), time.time()+300))

@@ -24,8 +24,7 @@ def main():
     if args.revoke_all:
         with service.db() as c:
             c.execute('BEGIN IMMEDIATE')
-            for table in ('credentials','sessions','requests','challenges','pairing'):
-                c.execute(f'DELETE FROM admin_auth_{table}')
+            admin_auth.revoke_all(c)
             admin_auth.event(c, 'local_revocation')
         print('Passkeys, sessões e pedidos revogados. A chave legada depende da sua feature flag.')
         return
