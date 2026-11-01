@@ -347,6 +347,8 @@
   }
   const originalRender = renderSettings;
   renderSettings = function(data) {
+    // Registration heartbeats replace rows; never let that reorder power buttons.
+    data={...data,workers:[...data.workers].sort((a,b)=>a.id.localeCompare(b.id))};
     const focused = document.activeElement;
     const selector = focused?.dataset?.powerWorker ? '[data-power-worker="'+focused.dataset.powerWorker+'"]'
       : focused?.dataset?.model ? '[data-model="' + focused.dataset.model + '"]'

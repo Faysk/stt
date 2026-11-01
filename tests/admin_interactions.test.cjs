@@ -110,7 +110,7 @@ vm.runInContext(fs.readFileSync('web/admin-enhancements.js','utf8'),ctx);
   assert.equal(calls.filter(c=>c.path==='/api/admin/model-preloads').length,1);
   assert.deepEqual(JSON.parse(calls[0].opts.body),{worker:'notebook',model:'turbo'});
   assert.match(nodes['config-summary'].textContent,/Alterações pendentes/);
-  const cpucard=nodes.workers.children[1];
+  const cpucard=nodes.workers.children[0];
   cpucard.fire('click');
   assert.equal(nodes.worker.value,'cpu-only');
   assert.equal(nodes['device-cards'].children[1].disabled,true);
@@ -134,13 +134,13 @@ vm.runInContext(fs.readFileSync('web/admin-enhancements.js','utf8'),ctx);
   assert.equal(calls.length,oldRequests,'S7 never schedules remote model preloads');
 
   // Returning to the configured notebook restores its active precision/model.
-  nodes.workers.children[0].fire('click');
+  nodes.workers.children[1].fire('click');
   assert.equal(nodes.worker.value,'notebook');
   assert.equal(nodes.model.value,'small');
   assert.equal(nodes.device.value,'cpu');
   assert.equal(nodes.compute.value,'int8');
 
-  const notebookPower=nodes.workers.children[0].querySelectorAll('button').find(b=>b.dataset.powerWorker==='notebook');
+  const notebookPower=nodes.workers.children[1].querySelectorAll('button').find(b=>b.dataset.powerWorker==='notebook');
   notebookPower.fire('click',{stopPropagation(){}});
   await new Promise(resolve=>setImmediate(resolve));
   const off=calls.find(c=>c.path==='/api/admin/workers/notebook/power');
@@ -150,9 +150,9 @@ vm.runInContext(fs.readFileSync('web/admin-enhancements.js','utf8'),ctx);
   data.workers[0].enabled=false;
   data.workers[0].info.power_state='disabled';
   ctx.renderSettings(data);
-  const on=nodes.workers.children[0].querySelectorAll('button').find(b=>b.dataset.powerWorker==='notebook');
+  const on=nodes.workers.children[1].querySelectorAll('button').find(b=>b.dataset.powerWorker==='notebook');
   assert.equal(on.textContent,'Ligar');
-  assert.match(nodes.workers.children[0].textContent,/Desligado · modelo liberado/);
+  assert.match(nodes.workers.children[1].textContent,/Desligado · modelo liberado/);
   on.fire('click',{stopPropagation(){}});
   await new Promise(resolve=>setImmediate(resolve));
   assert.deepEqual(JSON.parse(calls.filter(c=>c.path==='/api/admin/workers/notebook/power').at(-1).opts.body),{enabled:true});
