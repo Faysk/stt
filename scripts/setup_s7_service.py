@@ -51,7 +51,10 @@ def write(path,data,mode):
     tmp=path.with_name(path.name+'.stt-new-'+str(os.getpid()))
     with tmp.open('xb') as f:
         f.write(data);f.flush();os.fsync(f.fileno())
-    tmp.chmod(mode);tmp.replace(path)
+    # Android shared-storage permissions are virtualized. No secrets live there;
+    # enforce POSIX modes only for the private runtime and service entrypoints.
+    if not path.is_relative_to(app):tmp.chmod(mode)
+    tmp.replace(path)
 sources={k:base64.b64decode(v) for k,v in payload['files'].items()}
 write(app/'.stt-managed',b'STT service v1\n',0o600)
 write(services/'.stt-managed',b'STT service v1\n',0o600)
