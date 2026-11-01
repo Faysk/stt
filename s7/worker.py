@@ -256,7 +256,7 @@ def decode_audio(path,output,deadline,alive,input_type,storage_guard=None):
     run_bounded(command,deadline,"decode",alive,None,storage_guard)
     import wave
     with wave.open(str(output),"rb") as audio:
-        if (audio.getchannels()!=1 or audio.getsampwidth()!=2 or audio.getframerate()!=16000):
+        if (audio.getnchannels()!=1 or audio.getsampwidth()!=2 or audio.getframerate()!=16000):
             raise WorkerError("Invalid normalized PCM")
         duration=audio.getnframes()/16000
     if duration<=0 or duration>MAX_SECONDS:

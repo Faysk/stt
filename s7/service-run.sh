@@ -1,5 +1,6 @@
 #!/data/data/com.termux/files/usr/bin/sh
 set -eu
+exec 2>&1
 PREFIX=${PREFIX:-/data/data/com.termux/files/usr}
 HOME=${HOME:-/data/data/com.termux/files/home}
 export PREFIX HOME
