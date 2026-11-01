@@ -25,6 +25,10 @@ const assert=require('node:assert/strict');
  assert.equal(response.headers.get('cache-control'),'no-store');
  assert.equal(response.headers.get('x-robots-tag'),'noindex, nofollow, noarchive');
  assert.equal(response.headers.get('x-content-type-options'),'nosniff');
+ global.fetch=async()=>{const headers=new Headers();headers.append('set-cookie','__Host-stt_admin=session; Secure; HttpOnly; SameSite=Strict; Path=/');headers.append('set-cookie','__Host-stt_qr=; Max-Age=0; Secure; HttpOnly; Path=/');return new Response('{"authenticated":true}',{headers})};
+ const login=await worker.fetch(new Request('https://stt.faysk.dev/api/admin/auth/qr/consume',{method:'POST',headers:{cookie:'__Host-stt_qr=browser','origin':'https://stt.faysk.dev','x-csrf-token':'csrf'},body:'{}'}),{...env,ORIGIN:'https://origin.example',EDGE_KEY:'test-edge'});
+ assert.equal(login.headers.getSetCookie().length,2,'Edge must preserve session and binding cookie changes');
+ assert.equal(login.headers.get('cache-control'),'no-store');
  global.fetch=async()=>{throw new Error('simulated unavailable origin')};
  const unavailable=await worker.fetch(new Request('https://stt.faysk.dev/api/health'),
    {...env,ORIGIN:'https://origin.example',EDGE_KEY:'test-edge'});
