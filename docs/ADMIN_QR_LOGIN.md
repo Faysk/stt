@@ -65,6 +65,8 @@ Snapshots em `db/auth-backups` têm o mesmo grau de sensibilidade da base. Prese
 
 Testes Python geram um autenticador ES256 de fixture e executam cadastro e assertions reais contra o verificador WebAuthn, sem mocks da assinatura. Cobrem UV/origin/RP/challenge/userHandle/assinatura inválidos, chave desconhecida, replay, contador, vínculo de navegador, concorrência, expiração, cancelamento, rejeição, recuperação, CSRF, quotas, origem protegida e preservação das tabelas existentes. Testes Edge verificam múltiplos Set-Cookie. QA visual local cobre QR, cancelar e regenerar em desktop e viewport 390px.
 
+Em 01/11/2026, **31 testes direcionados passaram**, incluindo a execução real da CLI em subprocesso contra uma base temporária: snapshot, primeiro cadastro, bloqueio de novo cadastro, recuperação, revogação e preservação dos dados da aplicação. A suíte ampliada local anterior teve 105 passed, 3 skipped, 1 deselected e uma falha em teste antigo de symlink por WinError 1314; outra verificação de symlink foi excluída somente desse comando local pela mesma limitação. Os testes não foram desativados no código/CI. Node/Edge/i18n/deploy guard, dry-run Wrangler, Bandit e scanners de dependências também foram executados. Acompanhar o resultado do SHA final no [PR #86](https://github.com/Faysk/stt/pull/86).
+
 Ainda necessários antes de habilitar em produção:
 
 1. Dependências e migração em cópia de staging Windows, snapshot e recuperação/rollback conferidos.

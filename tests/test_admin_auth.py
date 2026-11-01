@@ -308,3 +308,30 @@ def test_malformed_non_ascii_auth_headers_deny_without_server_error(setup,monkey
     with pytest.raises(HTTPException) as denial:
         auth.check_csrf(request,'fixture-token')
     assert denial.value.status_code==403
+
+
+def test_local_cli_snapshots_and_recovery_revoke_without_touching_app_data(setup):
+    import os
+    import re
+    import subprocess
+    import sys
+    pc,phone,m=setup
+    env={**os.environ,'PYTHONUTF8':'1'}
+    def cli(*args):
+        return subprocess.run([sys.executable,'-m','scripts.admin_pair',*args],
+            cwd=m.ROOT,env=env,text=True,encoding='utf-8',capture_output=True,timeout=30)
+    first=cli()
+    assert first.returncode==0
+    token=re.search(r'#pair=([A-Za-z0-9_-]+)',first.stdout).group(1)
+    device=Authenticator();opts=options(phone,purpose='enroll',pair=token)
+    assert finish(phone,opts,device.register(opts)).status_code==200
+    assert cli().returncode==2
+    qr=start(pc);approve(phone,device,qr);consume(pc,qr)
+    with m.db() as c: c.execute("INSERT INTO settings VALUES(99,'preserve')")
+    assert cli('--recover').returncode==0
+    assert pc.get('/api/admin').status_code==401
+    assert list((m.DB.parent/'auth-backups').glob('*.sqlite3'))
+    assert cli('--revoke-all').returncode==0
+    with m.db() as c:
+        assert c.execute('SELECT value FROM settings WHERE id=99').fetchone()[0]=='preserve'
+        assert c.execute('SELECT count(*) FROM admin_auth_pairing').fetchone()[0]==0
