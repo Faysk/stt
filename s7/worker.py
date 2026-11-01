@@ -29,11 +29,11 @@ ID = "s7-edge"
 # User-Agent is not authorization; x-worker-key and edge protection still apply.
 CLIENT_USER_AGENT = "Mozilla/5.0"
 MAX_BYTES = 8 * 1024 * 1024
-MAX_SECONDS = 120
+MAX_SECONDS = 300
 SLEEP_SECONDS = 5
 MIN_INTERNAL_FREE = 2 * 1024**3
 WORKSPACE_BUDGET = 64 * 1024**2
-JOB_RESERVE = 16 * 1024**2
+JOB_RESERVE = 24 * 1024**2
 JOB_ID = re.compile(r"^[a-zA-Z0-9_-]{1,80}$")
 
 class WorkerError(Exception):

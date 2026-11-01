@@ -73,7 +73,7 @@ def history(c,period,now=None):
         max(gpu_max) gpu_max,sum(queue_sum) queue,max(queue_max) queue_max
         FROM telemetry WHERE step=? AND bucket>=? AND bucket<=? GROUP BY CAST(bucket/? AS INTEGER) ORDER BY bucket''',(step,step,source,start,now,step)):
         row=dict(r)
-        points[row['bucket']]={**row,'cpu':row['cpu']/row['n'],'ram':row['ram']/row['n'],
+        points[row['bucket']]={**row,'cpu':row['cpu']/row['n'] if row['cpu'] is not None else None,'ram':row['ram']/row['n'],
                               'gpu':row['gpu']/row['gpu_n'] if row['gpu_n'] else None,'queue':row['queue']/row['n']}
     jobs={}
     for r in c.execute('''SELECT CAST(created/? AS INTEGER)*? bucket,count(*) submitted,

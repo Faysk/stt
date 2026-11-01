@@ -1,6 +1,6 @@
 # Galaxy S7 Edge — worker nativo para stt.faysk.dev
 
-**Estado em 01/11/2026:** S7 Edge online como worker secundário supervisionado, com transcrição real concluída pela API pública. O notebook permanece como executor principal. A seleção no administrador permite torná-lo principal; não é necessária para o modo secundário já habilitado nesta instalação.
+**Estado em 01/11/2026:** o S7 hospeda agora a API, o banco e os arquivos, além de executar Tiny. A transcrição OGG de 154 s foi concluída no aparelho. O notebook está configurado para voltar como worker remoto após reinício/login. Consulte o [estado operacional e testes de autonomia](S7_AUTONOMY.md); as receitas de provisionamento Windows abaixo descrevem o modo anterior e novas instalações.
 
 ## Validação ponta a ponta — 01/11/2026
 
@@ -18,7 +18,7 @@ O padrão é prévia somente leitura. Após revisar, usar `--apply --start`, for
 
 - Código canônico, configuração de log e logs rotacionados ficam no microSD em `~/storage/external-1/stt-worker`; quatro arquivos de log de até 64 KiB, além do corrente.
 - A cópia de execução e os pequenos entrypoints permanecem no ambiente privado do Termux: código modificável no armazenamento compartilhado não é executado com acesso à chave. Temporários e outbox usam cache privado `~/.cache/stt-worker` (0700), reconstruível a partir dos originais que continuam na API.
-- Antes de aceitar trabalho, reserva 16 MiB para a operação; mantém piso de 2 GiB livres no interno e orçamento de 64 MiB para o workspace. Download e subprocessos revalidam armazenamento; um subprocesso é encerrado se o orçamento for ultrapassado. Resultado de outbox limitado a 1 MiB.
+- Antes de aceitar trabalho, reserva 24 MiB para a operação; mantém piso de 2 GiB livres no interno e orçamento de 64 MiB para o workspace. Download e subprocessos revalidam armazenamento; um subprocesso é encerrado se o orçamento for ultrapassado. Resultado de outbox limitado a 1 MiB.
 - Runit reinicia somente o processo STT, com pausa de 15s após saída. `sv status ~/.local/share/stt-services/worker` mostra o estado. O instalador não reinicia uma instância já ativa para atualizar código: drenar o trabalho antes de uma atualização supervisionada.
 - O entrypoint exclusivo `~/.termux/boot/20-stt-worker` espera até cinco minutos pelo microSD; nunca usa o interno como substituto de logs/dados persistentes. Requer Termux:Boot já instalado e habilitado. Configurar o script não comprova recuperação após reboot físico.
 - O instalador recusa migração se houver resultados pendentes no antigo workspace. Não apagar outbox para desbloquear a instalação.
@@ -36,7 +36,7 @@ Em 30/10/2026, o Samsung S7 Edge real (Android 8, arm64-v8a) compilou `whisper.c
 - A API aceita `STT_S7_WORKER_KEY` separada e restringe o token ao worker `s7-edge` e aos seus leases. O token mestre `STT_WORKER_KEY` continua somente no Windows.
 - O dispositivo anuncia `engine=whisper.cpp`, modelo `tiny` GGML, CPU e perfil compatível `float32` no contrato do STT. **Não significa que os pesos GGML Tiny sejam float32**: o peso do modelo compilado pode ser FP16. Não habilitar modos INT8/floating mistos sem ensaio real.
 - Com `STT_S7_SIDE_WORKER=1` e `STT_S7_ENABLED=1` no host Windows, o S7 trabalha **em paralelo** com o notebook, recebendo somente tarefas pequenas enquanto o worker principal continua com os demais formatos/modelos. Desligado por padrão; não habilitar antes de validar ponta a ponta.
-- A API só atribui ao S7 **uploads de áudio com extensão `.wav` ou `.mp3` com até 8 MiB**. No telefone, a conversão FFmpeg transforma o conteúdo em WAV PCM16 mono 16kHz e limita a **120 segundos** de áudio validado. **Outros formatos, vídeos, YouTube e jobs maiores continuam aguardando outro executor** quando o S7 for o worker principal. Com o modo secundário opcional habilitado, o notebook continua executando os demais jobs.
+- A API só atribui ao S7 **uploads de áudio com extensão `.wav`, `.mp3` ou `.ogg` com até 8 MiB**. No telefone, a conversão FFmpeg transforma o conteúdo em WAV PCM16 mono 16kHz e limita a **300 segundos** de áudio validado. **Outros formatos, vídeos, YouTube e jobs maiores continuam aguardando outro executor** quando o S7 for o worker principal. Com o modo secundário opcional habilitado, o notebook continua executando os demais jobs.
 - Execução subprocesso isolada, 2 threads, prazo máximo local 10 minutos, heartbeat a cada 15 s; spool de resultado privado e atômico com confirmação por recibo da API. Em falha de conversão/inferência, devolve erro sem expor a mídia nos logs. O código jamais acessa os bancos do Observatory.
 
 ## 1. Preparação no Windows

@@ -19,7 +19,8 @@ from server.config import getenv, required
 
 load_dotenv()
 BASE = getenv('STT_URL','http://127.0.0.1:8765').rstrip('/')
-HEADERS = {'x-worker-key':required('STT_WORKER_KEY'),'x-edge-key':getenv('STT_EDGE_KEY','')}
+HEADERS = {'x-worker-key':required('STT_WORKER_KEY'),'x-edge-key':getenv('STT_EDGE_KEY',''),
+           'user-agent':'Mozilla/5.0'}
 IDENTITY = getenv('STT_WORKER_ID','notebook')
 client = httpx.Client(base_url=BASE,headers=HEADERS,timeout=60)
 

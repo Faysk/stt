@@ -197,7 +197,7 @@
         node('span',info.gpu.vram_mb + ' MB VRAM · ' + (info.gpu.free_vram_mb ?? 'n/d') + ' MB livres','feature-pill'));
       details.append(node('span',(info.models || []).length + ' modelos em cache','feature-pill'));
       card.append(node('p',w.id === 's7-edge'
-        ? 'Tiny · CPU · ' + (dashboardData.s7_formats || ['wav','mp3']).join(' / ').toUpperCase() + ' · até 8 MiB / 2 min'
+        ? 'Tiny · CPU · ' + (dashboardData.s7_formats || ['wav','mp3']).join(' / ').toUpperCase() + ' · até 8 MiB / 5 min'
         : 'Executor geral · modelos e formatos conforme configuração','worker-capability'));
       card.append(details);
       card.dataset.worker = w.id;
@@ -230,7 +230,7 @@
       card.append(
         node('strong', target.label + ' · SSH'),
         node('p', dashboardData.s7_side_worker
-          ? (online ? 'Worker paralelo online · Tiny · até 8 MiB / 120 s'
+          ? (online ? 'Worker paralelo online · Tiny · até 8 MiB / 300 s'
                     : 'Modo paralelo habilitado · worker offline')
           : capable ? 'Executor STT registrado · validar transcrição ponta a ponta'
           : online ? 'Worker conectado · capacidade do modelo/CPU ainda não validada'
@@ -328,6 +328,10 @@
       : focused?.dataset?.device ? '[data-device="' + focused.dataset.device + '"]'
       : focused?.dataset?.compute ? '[data-compute="' + focused.dataset.compute + '"]' : null;
     dashboardData = data;
+    const dependency = document.querySelector('.worker-dependency');
+    if (dependency) dependency.textContent = data.autonomous_host
+      ? 'API, fila e arquivos no S7 · conexão pública própria · notebook opcional'
+      : 'Conexão por HTTPS · API, fila e arquivos dependem do servidor central. SSH é apenas manutenção.';
     originalRender(data);
     enhanceModels();
     enhanceWorkers();

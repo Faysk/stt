@@ -8,6 +8,13 @@ $runtime = Join-Path $projectPath '.venv\Scripts\python.exe'
 $logs = Join-Path $projectPath 'logs'
 New-Item -ItemType Directory -Force -Path $logs | Out-Null
 if (-not (Test-Path -LiteralPath (Join-Path $projectPath '.env'))) { throw 'Crie o .env antes de iniciar.' }
+$hostMode = & $runtime -c "from dotenv import dotenv_values; print(dotenv_values('.env').get('STT_HOST_API','1'))"
+if ($hostMode.Trim() -eq '0') {
+    & $runtime (Join-Path $PSScriptRoot 'supervise.py') --once
+    if ($LASTEXITCODE -ne 0) { throw 'Falha no supervisor do worker remoto.' }
+    Write-Output 'STT_REMOTE_WORKER_MODE: somente worker Windows; API e conexao publica pertencem ao coordenador S7.'
+    exit 0
+}
 $listeners = @(
     Get-NetTCPConnection -LocalPort 8765 -State Listen -ErrorAction SilentlyContinue |
         Where-Object { $null -ne $_ }

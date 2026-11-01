@@ -24,6 +24,7 @@ from server.metrics import validate as validate_metrics
 from server.config import getenv
 from server.ssh_targets import ssh_targets
 from server import admin_auth
+from server import hosting
 
 load_dotenv()
 ROOT = Path(__file__).resolve().parents[1]
@@ -183,7 +184,11 @@ def collect():
     gpu=obs.gpu_info()
     ram=psutil.virtual_memory()
     disk=shutil.disk_usage(BLOB)
-    host_snapshot=dict(at=time.time(),cpu_percent=psutil.cpu_percent(interval=.1),ram_percent=ram.percent,
+    try:
+        cpu=psutil.cpu_percent(interval=.1)
+    except (OSError,psutil.Error):
+        cpu=None
+    host_snapshot=dict(at=time.time(),cpu_percent=cpu,ram_percent=ram.percent,
         ram_used_gb=round(ram.used/1024**3,2),ram_total_gb=round(ram.total/1024**3,2),
         free_gb=round(disk.free/1024**3,1),total_gb=round(disk.total/1024**3,1),gpu=gpu)
     with db() as c:
@@ -303,6 +308,13 @@ def preflight(request: Request):
     slot = secrets.token_hex(16) if is_upload else None
     with db() as c:
         c.execute('BEGIN IMMEDIATE')
+        capacity = hosting.capabilities(c)
+        if not is_upload and not capacity['youtube']:
+            raise HTTPException(503, 'Modo limitado: envie áudio WAV, MP3 ou OGG de até 5 minutos.')
+        length = request.headers.get('content-length', '')
+        if length.isdecimal() and int(length) > capacity['max_mb']*1024**2+1024**2:
+            raise HTTPException(413, 'Arquivo excede o limite disponível no momento.')
+        hosting.storage_guard(BLOB, reserve=capacity['max_mb']*1024**2)
         c.execute('DELETE FROM upload_slots WHERE created<?',(now-7200,))
         if c.execute('SELECT count(*) FROM admission WHERE client=? AND created>?',(key,now-3600)).fetchone()[0] >= 20:
             raise HTTPException(429,'Limite de envios desta rede atingido. Tente mais tarde.')
@@ -375,6 +387,10 @@ class BodyLimit:
         exceeded = False
         responded = False
         started = False
+        maximum = MAX_BYTES
+        if getenv('STT_LIGHT_HOST','0')=='1' and scope.get('path')=='/api/jobs/upload':
+            with db() as connection:
+                maximum = hosting.capabilities(connection)['max_mb']*1024**2
 
         async def limited():
             nonlocal size, exceeded
@@ -384,7 +400,7 @@ class BodyLimit:
             if message['type'] != 'http.request':
                 return message
             size += len(message.get('body', b''))
-            if size > MAX_BYTES + 1024*1024:
+            if size > maximum + 1024*1024:
                 # The multipart parser may turn exceptions raised by receive()
                 # into HTTP 400. Send an explicit 413 instead, while ensuring
                 # no further bytes are passed to the application.
@@ -394,7 +410,7 @@ class BodyLimit:
 
         async def reject():
             response = secure_api_response(
-                JSONResponse({'detail':'Limite de 90 MB por arquivo.'}, status_code=413),
+                JSONResponse({'detail':'Arquivo excede o limite disponível no momento.'}, status_code=413),
                 scope.get('path',''))
             await response(scope, receive, send)
 
@@ -427,8 +443,11 @@ def health():
         recent = c.execute('SELECT count(*) FROM workers WHERE seen>? AND id=?', (time.time()-90,cfg['worker'])).fetchone()[0]
         waiting=c.execute("SELECT count(*) FROM jobs WHERE status='queued'").fetchone()[0]
         running=c.execute("SELECT count(*) FROM jobs WHERE status='running'").fetchone()[0]
+        capacity=hosting.capabilities(c)
+        if not recent and getenv('STT_S7_ENABLED','0')=='1' and getenv('STT_S7_SIDE_WORKER','0')=='1':
+            recent=c.execute("SELECT count(*) FROM workers WHERE id='s7-edge' AND seen>?",(time.time()-90,)).fetchone()[0]
     pressure='free' if queue==0 else 'short' if queue<=3 else 'medium' if queue<=10 else 'high'
-    return dict(online=bool(recent), queue=queue,waiting=waiting,running=running,pressure=pressure,paused=cfg['paused'],max_mb=90, retention_hours=24)
+    return dict(online=bool(recent), queue=queue,waiting=waiting,running=running,pressure=pressure,paused=cfg['paused'],retention_hours=24,**capacity)
 
 @app.get('/api/jobs')
 def jobs(own=Depends(owner)):
@@ -441,6 +460,9 @@ async def upload(request: Request, file: UploadFile = File(...), own=Depends(own
     if suffix not in {'.mp3','.wav','.m4a','.mp4','.webm','.ogg','.flac','.aac','.mov','.mkv','.opus'}:
         raise HTTPException(400, 'Formato de áudio ou vídeo não suportado.')
     with db() as c:
+        capacity = hosting.capabilities(c)
+        if capacity['formats'] and suffix.lstrip('.') not in capacity['formats']:
+            raise HTTPException(400, 'Modo limitado: envie WAV, MP3 ou OGG de até 5 minutos e 8 MiB.')
         jid = new_job(c, own, Path(file.filename).name[:180], 'upload',request)
     folder = BLOB / jid
     created = False
@@ -451,13 +473,19 @@ async def upload(request: Request, file: UploadFile = File(...), own=Depends(own
         with (folder / 'input.media').open('wb') as f:
             while chunk := await file.read(1024*1024):
                 size += len(chunk)
-                if size > MAX_BYTES:
-                    raise HTTPException(413, 'Limite de 90 MB por arquivo.')
+                if size > capacity['max_mb']*1024**2:
+                    raise HTTPException(413, 'Arquivo excede o limite disponível no momento.')
+                hosting.storage_guard(BLOB, reserve=len(chunk))
                 f.write(chunk)
         if not size:
             raise HTTPException(400, 'Arquivo vazio.')
+        duration = None
+        if getenv('STT_LIGHT_HOST','0')=='1' and suffix.lstrip('.') in hosting.SMALL_FORMATS and size<=8*1024**2:
+            duration = hosting.duration_probe(folder/'input.media', suffix.lstrip('.'))
+            if capacity['limited'] and duration > capacity['max_seconds']:
+                raise HTTPException(413, 'Modo limitado: áudio de até 5 minutos.')
         with db() as c:
-            c.execute("UPDATE jobs SET status='queued',input_bytes=? WHERE id=?", (size,jid))
+            c.execute("UPDATE jobs SET status='queued',input_bytes=?,duration=? WHERE id=?", (size,duration,jid))
     except BaseException:
         # The directory is ours only after mkdir succeeds. Never remove a
         # pre-existing directory when disk creation failed.
@@ -535,6 +563,7 @@ def _publish_generation(folder, receipt, exports):
     Orphaned generations remain invisible after a SQL rollback and may be
     reused only when all files match the same canonical receipt.
     """
+    hosting.storage_guard(BLOB, reserve=sum(len(content.encode('utf-8')) for content in exports.values()))
     root = folder / 'results'
     if folder.is_symlink() or root.is_symlink():
         raise OSError('Unsafe result storage directory')
@@ -612,6 +641,7 @@ def dashboard():
           models=MODELS,catalog=installed_models(getenv('STT_MODELS',str(ROOT/'models'))),
           preloads=[dict(r) for r in c.execute('SELECT * FROM model_preloads ORDER BY updated DESC LIMIT 100')],
           ssh_targets=ssh_targets(),s7_formats=['wav','mp3','ogg'],
+          autonomous_host=(getenv('STT_LIGHT_HOST','0')=='1'),
           s7_side_worker=(getenv('STT_S7_ENABLED','0')=='1' and getenv('STT_S7_SIDE_WORKER','0')=='1'))
 
 def admin_job(r):
@@ -819,6 +849,7 @@ class Claim(BaseModel):
 
 def s7_eligible(item):
     return (item['source']=='upload' and 0 < (item['input_bytes'] or 0) <= 8*1024**2
+            and ('duration' not in item.keys() or item['duration'] is None or item['duration']<=300)
             and Path(item['title'] or '').suffix.lower() in ('.wav','.mp3','.ogg'))
 
 @app.post('/api/worker/claim', dependencies=[Depends(worker)])

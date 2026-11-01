@@ -176,7 +176,7 @@
 }
 .admin-page .executor-section {margin-top:22px}
 .admin-page .executor-section>p {margin:5px 0 12px}
-.admin-page #workers {display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+.admin-page #workers {display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,340px),1fr));gap:12px}
 .admin-page #workers .worker-card {margin:0;display:grid;grid-template-columns:minmax(0,1fr);gap:12px;padding:16px;align-content:start;min-width:0}
 .admin-page #workers .worker-card>div {min-width:0;overflow-wrap:anywhere}
 .admin-page #workers .worker-card>div:nth-child(2) {border-top:1px solid var(--line);padding-top:10px}

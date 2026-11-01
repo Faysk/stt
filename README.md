@@ -4,7 +4,7 @@
 
 [Usar o serviço](https://stt.faysk.dev) · [Guia de desenvolvimento](docs/DEVELOPMENT.md) · [Licença MIT](LICENSE)
 
-stt / faysk é uma plataforma aberta de transcrição, com processamento acelerado por GPU, reconhecimento multilíngue e exportação em formatos prontos para leitura, edição e legendagem. O acesso público é gratuito e não exige cadastro.
+stt / faysk é uma plataforma aberta de transcrição, com suporte a processamento acelerado por GPU, reconhecimento multilíngue e exportação em formatos prontos para leitura, edição e legendagem. O acesso público é gratuito e não exige cadastro.
 
 ## Como usar
 
@@ -41,13 +41,13 @@ Após a expiração, o acesso é bloqueado imediatamente. A limpeza física é f
 
 ## Limites e qualidade
 
-Cada envio aceita até **90 MB** e **duas horas** de duração. Limites de frequência e capacidade de fila ajudam a distribuir os recursos do serviço. Vídeos do YouTube dependem de disponibilidade pública e das condições de acesso da plataforma.
+Com um executor completo disponível, cada envio aceita até **90 MB** e **duas horas** de duração. Em modo limitado, são aceitos áudios WAV, MP3 e OGG de até **8 MiB e 5 minutos**, com novos envios de YouTube desabilitados. A interface mostra a capacidade disponível no momento. Limites de frequência e capacidade de fila ajudam a distribuir os recursos do serviço. Vídeos do YouTube dependem de disponibilidade pública e das condições de acesso da plataforma.
 
 A qualidade varia conforme ruído, idioma, sotaque e características da gravação. Revise o texto antes de usar em contextos que exigem precisão. A disponibilidade pode variar durante manutenção ou ajustes de capacidade.
 
 ## Estado de release e milestones
 
-O serviço STT já foi verificado em transcrição de um vídeo público do YouTube e em HTTP **200/200/403 após a retirada do TTS legado**. O código de seleção de modelos, preload, cards CPU/GPU e histórico no console administrativo foi integrado, mas **a instalação no Windows e os testes reais desses recursos continuam sujeitos a homologação**. A disponibilidade após reinício, recuperação de falhas, uploads e validação GPU ainda não estão comprovadas.
+O serviço foi verificado em uploads e transcrições públicas, com leitura e exportação nos quatro formatos. O coordenador autônomo e o modo limitado estão implantados; os testes físicos de reboot e operação prolongada continuam pendentes. A inicialização do executor Windows está configurada após login do usuário. [Estado operacional e evidências](docs/S7_AUTONOMY.md).
 
 Consulte [prontidão para release, marcos propostos e critérios de 100%](docs/RELEASE_READINESS.md). Este estado refere-se ao STT; o bloqueio de mapeamento integral do repositório IaC é independente.
 

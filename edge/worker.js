@@ -1,4 +1,4 @@
-// Static frontend at the edge; API streamed to the notebook through Tunnel.
+// Static frontend at the edge; API streamed to the coordinator through Tunnel.
 const apiError = detail => Response.json({detail},{status:503,headers:{
   'Cache-Control':'no-store','X-Robots-Tag':'noindex, nofollow, noarchive',
   'X-Content-Type-Options':'nosniff','Referrer-Policy':'no-referrer'
@@ -33,7 +33,7 @@ export default {
       out.headers.set('Referrer-Policy','no-referrer');
       return out;
     } catch {
-      return apiError('Notebook indisponível. Tente novamente mais tarde.');
+      return apiError('Serviço temporariamente indisponível. Tente novamente mais tarde.');
     }
   }
 };

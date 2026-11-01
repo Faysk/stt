@@ -1,5 +1,7 @@
 # Publicar o STT no Windows + Cloudflare (procedimento do operador)
 
+> **Operação atual (01/11/2026):** API e dados migraram para o S7. Este roteiro de restart de API Windows descreve a arquitetura anterior. Não o use para devolver a origem à cópia antiga do banco. Consulte [S7_AUTONOMY.md](S7_AUTONOMY.md) e os instaladores isolados do S7; frontend continua com deploy Cloudflare independente.
+
 O git merge apenas atualiza o repositório. O backend e o executor ficam no Windows; o frontend e proxy de API ficam no Cloudflare Worker faysk-stt. GitHub Actions executa testes/dry-run e NÃO tem deploy automático. Esta publicação manual é uma ação explícita do operador.
 
 ## Antes de publicar
