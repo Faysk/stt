@@ -1,6 +1,17 @@
 # Login administrativo por QR e passkey
 
-Implementação da [issue #84](https://github.com/Faysk/stt/issues/84). **Desativada por padrão; não implantada nem homologada fisicamente no S23+.** A autenticação pública das transcrições e a dos executores continuam independentes.
+Implementação da [issue #84](https://github.com/Faysk/stt/issues/84), entregue no [PR #86](https://github.com/Faysk/stt/pull/86). **Desativada por padrão em instalações novas; ativada em produção em 01/11/2026, com pareamento e duas entradas confirmadas pelo proprietário no S23+.** A autenticação pública das transcrições e a dos executores continuam independentes.
+
+## Publicação observada em 01/11/2026
+
+- Código da API: `e9dfe9b` (merge do PR #86); Worker publicado: `1180254d-2a10-4153-b41c-e81280d3cee4`.
+- Flags efetivas: QR habilitado e recuperação legada habilitada. O proprietário criou a passkey no aparelho, sem transmitir PIN, biometria ou chave privada ao serviço.
+- Duas aprovações reais pelo S23+ abriram o console no navegador desktop. Recarregar restaurou a sessão; logout removeu a sessão no servidor e bloqueou o painel; nova entrada exigiu nova aprovação.
+- O link correspondente ao QR foi aberto via USB para este ensaio. A leitura óptica pela câmera não foi comprovada neste teste.
+- Frontend/API públicos responderam 200; admin anônimo 401; origem direta sem segredo 403. Snapshot SQLite consistente antes da migração e outro pelo procedimento de pareamento. Fila e configuração anteriores restauradas; executor e Tunnel preservados.
+- Somente a API foi reiniciada. O gate CIM do publicador padrão estava indisponível nesta sessão; os processos da API foram identificados individualmente e a liberação TCP foi conferida antes de iniciar a substituta. O encerramento do launcher retornou AccessDenied após o filho já ter parado; a API foi reiniciada e os checks local/público confirmaram recuperação.
+- Nenhuma nova inferência de áudio foi executada neste ensaio de autenticação. A matriz completa de processamento continua no item #37; recuperação destrutiva de credenciais permanece validada em fixture/staging, sem revogar a passkey recém-cadastrada em produção.
+- Capturas e eventos de prova permanecem privados, fora do Git. Não publicar credencial, token de pareamento, cookie, código de pedido ou transcrição em tickets.
 
 ## Experiência
 
@@ -67,12 +78,12 @@ Testes Python geram um autenticador ES256 de fixture e executam cadastro e asser
 
 Em 01/11/2026, **31 testes direcionados passaram**, incluindo a execução real da CLI em subprocesso contra uma base temporária: snapshot, primeiro cadastro, bloqueio de novo cadastro, recuperação, revogação e preservação dos dados da aplicação. A suíte ampliada local anterior teve 105 passed, 3 skipped, 1 deselected e uma falha em teste antigo de symlink por WinError 1314; outra verificação de symlink foi excluída somente desse comando local pela mesma limitação. Os testes não foram desativados no código/CI. Node/Edge/i18n/deploy guard, dry-run Wrangler, Bandit e scanners de dependências também foram executados. Acompanhar o resultado do SHA final no [PR #86](https://github.com/Faysk/stt/pull/86).
 
-Ainda necessários antes de habilitar em produção:
+Critérios de publicação e acompanhamento:
 
-1. Dependências e migração em cópia de staging Windows, snapshot e recuperação/rollback conferidos.
-2. Pareamento real pelo proprietário no S23+ e Chrome Windows/Android: aprovação, rejeição, timeout, logout, cookie após recarregar e passkey ausente em outro celular.
-3. Publicação coordenada backend/Worker e teste do fluxo pelo domínio HTTPS, com origin direta bloqueada.
-4. Confirmar que envio e transcrição públicos seguem funcionando e o executor principal permanece o mesmo.
+1. Dependências, migração, snapshot e CLI de recuperação testados em base isolada; migração e snapshots aplicados em produção. Não executar recuperação destrutiva só para teste na credencial ativa.
+2. Pareamento, duas aprovações, logout e restauração após recarregar comprovados no S23+/Chrome e desktop. Rejeição, timeout, replay e credencial desconhecida cobertos por testes isolados; ampliar a matriz física de câmera/outro aparelho conforme #84.
+3. Backend/Worker publicados e fluxo HTTPS validado; origem direta permanece bloqueada.
+4. Executor principal preservado, saúde pública conferida; novo E2E de mídia/exports continua no escopo #37.
 
 ## Referências
 
