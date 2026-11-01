@@ -188,16 +188,17 @@
     cards.forEach((card,index) => {
       const w = workers[index], info = w.info || {}, online = dashboardData.now - w.seen < 90;
       if (!w) return;
-      const gpu = info.gpu?.name || 'GPU não detectada';
+      const gpu = info.gpu?.name;
       const ram = info.ram_total_mb ? (info.ram_total_mb / 1024).toFixed(1) + ' GB RAM' : 'RAM não informada';
-      const types = info.compute_types || {};
       const details = node('div','', 'worker-features');
       details.append(node('span','CPU · ' + (info.cpu || 'n/d') + ' threads','feature-pill'),
-        node('span',ram,'feature-pill'),
-        node('span',gpu,'feature-pill'),
-        node('span',info.gpu ? info.gpu.vram_mb + ' MB VRAM total · ' + (info.gpu.free_vram_mb ?? 'n/d') + ' MB livres (snapshot)' : 'CUDA não detectada','feature-pill'),
-        node('span',(info.models || []).length + ' modelos em cache','feature-pill'),
-        node('span','CPU: ' + (types.cpu || []).join(', ') + ' / CUDA: ' + (types.cuda || []).join(', '),'feature-pill'));
+        node('span',ram,'feature-pill'));
+      if (gpu) details.append(node('span',gpu,'feature-pill'),
+        node('span',info.gpu.vram_mb + ' MB VRAM · ' + (info.gpu.free_vram_mb ?? 'n/d') + ' MB livres','feature-pill'));
+      details.append(node('span',(info.models || []).length + ' modelos em cache','feature-pill'));
+      card.append(node('p',w.id === 's7-edge'
+        ? 'Tiny · CPU · ' + (dashboardData.s7_formats || ['wav','mp3']).join(' / ').toUpperCase() + ' · até 8 MiB / 2 min'
+        : 'Executor geral · modelos e formatos conforme configuração','worker-capability'));
       card.append(details);
       card.dataset.worker = w.id;
       const selected = $('worker').value === w.id;
@@ -229,7 +230,7 @@
       card.append(
         node('strong', target.label + ' · SSH'),
         node('p', dashboardData.s7_side_worker
-          ? (online ? 'Worker paralelo online · Tiny WAV/MP3 até 120 s'
+          ? (online ? 'Worker paralelo online · Tiny · até 8 MiB / 120 s'
                     : 'Modo paralelo habilitado · worker offline')
           : capable ? 'Executor STT registrado · validar transcrição ponta a ponta'
           : online ? 'Worker conectado · capacidade do modelo/CPU ainda não validada'

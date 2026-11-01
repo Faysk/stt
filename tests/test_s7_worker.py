@@ -212,17 +212,30 @@ def test_s7_outbox_rejects_oversized_result_before_writing(tmp_path):
 
 
 @pytest.mark.parametrize('channels',[1,2])
-def test_s7_validates_real_wave_reader_after_normalization(tmp_path,monkeypatch,channels):
+@pytest.mark.parametrize('input_type',['wav','mp3','ogg'])
+def test_s7_validates_real_wave_reader_after_normalization(tmp_path,monkeypatch,channels,input_type):
     import threading,time,wave
     from s7 import worker as w
     output=tmp_path/'normalized.wav'
     def fake_ffmpeg(*args,**kwargs):
+        command=args[0]
+        assert command[command.index('-f')+1]==input_type
+        assert command[command.index('-protocol_whitelist')+1]=='file,pipe'
         with wave.open(str(output),'wb') as audio:
             audio.setnchannels(channels);audio.setsampwidth(2);audio.setframerate(16000)
             audio.writeframes(bytes(16000*2*channels))
     monkeypatch.setattr(w,'run_bounded',fake_ffmpeg)
     if channels==1:
-        assert w.decode_audio(tmp_path/'input.wav',output,time.time()+10,threading.Event(),'wav')==1
+        assert w.decode_audio(tmp_path/'input.media',output,time.time()+10,threading.Event(),input_type)==1
     else:
         with pytest.raises(w.WorkerError):
-            w.decode_audio(tmp_path/'input.wav',output,time.time()+10,threading.Event(),'wav')
+            w.decode_audio(tmp_path/'input.media',output,time.time()+10,threading.Event(),input_type)
+
+
+def test_s7_ogg_eligibility_still_restricts_size_and_source(tmp_path,monkeypatch):
+    module=api(tmp_path,monkeypatch)
+    item=dict(source='upload',input_bytes=384738,title='voice.ogg')
+    assert module.s7_eligible(item)
+    assert not module.s7_eligible(dict(item,input_bytes=8*1024**2+1))
+    assert not module.s7_eligible(dict(item,source='https://example.invalid'))
+    assert not module.s7_eligible(dict(item,title='voice.m3u8'))

@@ -163,6 +163,17 @@
 }
 .admin-page .model-card:focus-within {border-color:#5b8abb}
 .admin-page #settings-message {min-height:13px}
+.admin-page .worker-dependency {margin-top:10px}
+.admin-page .queue-blocked {color:var(--orange);max-width:360px;white-space:normal}
+.admin-page #settings .config-visuals {grid-template-columns:minmax(0,1fr) minmax(0,1fr)}
+.admin-page #settings #precision-cards {grid-template-columns:repeat(auto-fit,minmax(min(100%,230px),1fr))}
+.admin-page #settings #workers .worker-card {gap:9px;padding:14px}
+.admin-page #settings #workers .worker-card>div:nth-child(2) {padding-top:8px}
+.admin-page #settings .worker-features {padding-top:8px}
+.admin-page #settings .feature-pill {background:transparent;border-color:#2a3545}
+@media(max-width:1100px) {
+  .admin-page #settings .config-visuals {grid-template-columns:1fr}
+}
 .admin-page .executor-section {margin-top:22px}
 .admin-page .executor-section>p {margin:5px 0 12px}
 .admin-page #workers {display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}

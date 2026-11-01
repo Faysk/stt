@@ -611,7 +611,7 @@ def dashboard():
           host=host_snapshot,telemetry_error=telemetry_error,now=time.time(),versions=obs.package_versions(),
           models=MODELS,catalog=installed_models(getenv('STT_MODELS',str(ROOT/'models'))),
           preloads=[dict(r) for r in c.execute('SELECT * FROM model_preloads ORDER BY updated DESC LIMIT 100')],
-          ssh_targets=ssh_targets(),
+          ssh_targets=ssh_targets(),s7_formats=['wav','mp3','ogg'],
           s7_side_worker=(getenv('STT_S7_ENABLED','0')=='1' and getenv('STT_S7_SIDE_WORKER','0')=='1'))
 
 def admin_job(r):
@@ -619,6 +619,7 @@ def admin_job(r):
         'client_tag','network_tag','ui_language','priority','stage','attempts','worker','model','device','compute',
         'duration','elapsed','cpu_seconds','peak_rss_mb','peak_vram_mb','input_bytes','language','error','model_revision','runtime','engine','gpu_name','progress','timing','result_state','purged_at','purge_attempts','purge_retry_at','purge_error')}
     data['metrics'] = json.loads(r['metrics_json']) if r['metrics_json'] else None
+    data['s7_eligible'] = s7_eligible(r)
     data['queue_seconds'] = max(0,r['started']-r['created']) if r['started'] is not None else None
     data['job_total_seconds'] = max(0,r['finished']-r['created']) if r['finished'] is not None else None
     return data
@@ -818,7 +819,7 @@ class Claim(BaseModel):
 
 def s7_eligible(item):
     return (item['source']=='upload' and 0 < (item['input_bytes'] or 0) <= 8*1024**2
-            and Path(item['title'] or '').suffix.lower() in ('.wav','.mp3'))
+            and Path(item['title'] or '').suffix.lower() in ('.wav','.mp3','.ogg'))
 
 @app.post('/api/worker/claim', dependencies=[Depends(worker)])
 def claim(w: Claim, request: Request):
