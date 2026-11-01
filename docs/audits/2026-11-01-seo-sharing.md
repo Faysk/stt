@@ -31,6 +31,10 @@ A primeira configuração de `/index.html` em `_redirects` interagiu com o fetch
 
 Checks: `npm run check` (inclui novo `tests/seo.test.cjs`), testes Edge e i18n; dry-run Wrangler antes da primeira publicação; smoke HTTP e comparação criptográfica da imagem após publicação. Evidência visual do Search Console armazenada apenas localmente em logs, sem publicar dados da conta.
 
+Verificação ampliada local: pytest parou com **58 passed, 1 skipped, 1 failed** por `WinError 1314` ao criar symlink no teste existente `test_generation_rejects_symlinked_results_directory`; a conta não tem esse privilégio. A primeira execução também encontrou erro de permissão no cleanup do diretório temporário padrão; reproduzido com basetemp isolado para distinguir os problemas. Não desativados testes nem alteradas permissões do sistema. CI do commit final `7447c88` passou nos workflows [Tests](https://github.com/Faysk/stt/actions/runs/41329644280) e [Security](https://github.com/Faysk/stt/actions/runs/41329644338). Durante o push, integrada sem conflitos a atualização remota `8c70e00`; essa alteração administrativa posterior não faz parte do Worker publicado nesta tarefa.
+
+Acompanhamento de indexação e melhorias: [issue #85](https://github.com/Faysk/stt/issues/85).
+
 ## Pendências reais
 
 1. Aguardar processamento da fila do Google e verificar URL canônica escolhida, cobertura e impressões no Search Console. Não repetir solicitações: elas não elevam prioridade.
