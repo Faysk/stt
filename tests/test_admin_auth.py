@@ -293,3 +293,18 @@ def test_approval_cannot_be_replayed_for_replacement_qr(setup):
     assert consume(pc,old).status_code==401
     assert finish(phone,opts,device.assertion(opts)).status_code==401
     assert consume(pc,current).status_code==409
+
+
+def test_malformed_non_ascii_auth_headers_deny_without_server_error(setup,monkeypatch):
+    from fastapi import HTTPException
+    from starlette.requests import Request
+    pc,phone,m=setup
+    monkeypatch.setenv('STT_ADMIN_LEGACY_ENABLED','1')
+    request=Request({'type':'http','method':'GET','path':'/api/admin',
+                     'headers':[(b'x-admin-key',b'\xff'),(b'x-csrf-token',b'\xff')]})
+    with pytest.raises(HTTPException) as denial:
+        auth.authorize(request,m.db,m.getenv)
+    assert denial.value.status_code==401
+    with pytest.raises(HTTPException) as denial:
+        auth.check_csrf(request,'fixture-token')
+    assert denial.value.status_code==403

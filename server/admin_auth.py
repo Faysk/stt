@@ -99,7 +99,7 @@ def same_origin(request):
 
 
 def check_csrf(request, token):
-    if not token or not hmac.compare_digest(request.headers.get('x-csrf-token', ''), csrf(token)):
+    if not token or not hmac.compare_digest(request.headers.get('x-csrf-token', '').encode(), csrf(token).encode()):
         raise HTTPException(403, 'Atualize a página e tente novamente.')
 
 
@@ -146,7 +146,7 @@ def authorize(request, db, getenv):
     """Called by every existing Depends(admin), preserving worker/public scopes."""
     supplied = request.headers.get('x-admin-key', '')
     expected = getenv('STT_ADMIN_KEY', '')
-    if legacy_enabled(getenv) and expected and supplied and hmac.compare_digest(supplied, expected):
+    if legacy_enabled(getenv) and expected and supplied and hmac.compare_digest(supplied.encode(), expected.encode()):
         return
     if not enabled(getenv):
         raise HTTPException(401, 'Autenticação necessária.')
