@@ -74,7 +74,8 @@ log.mkdir(exist_ok=True)
 write(log/'config',b's65536\nn4\n',0o600)
 logger=('#!'+str(prefix/'bin/sh')+'\nexec '+str(prefix/'bin/svlogd')+' "'+str(log)+'"\n').encode()
 write(services/'worker/log/run',logger,0o700)
-write(services/'worker/finish',('#!'+str(prefix/'bin/sh')+'\nsleep 15\nexit 0\n').encode(),0o700)
+write(services/'worker/finish',('#!'+str(prefix/'bin/sh')+
+    '\nexec 2>&1\nprintf "STT_WORKER_EXIT code=%s signal=%s\\n" "$1" "$2"\nsleep 15\nexit 0\n').encode(),0o700)
 if payload['start']:
     subprocess.run([str(prefix/'bin/sh'),str(services/'start-service.sh')],check=True)
 print(json.dumps({'installed':True,'started':payload['start'],'private_runtime':True,

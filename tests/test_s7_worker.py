@@ -209,3 +209,20 @@ def test_s7_outbox_rejects_oversized_result_before_writing(tmp_path):
     job={'id':'fixture','lease':'test-lease','expires':99999999999}
     with pytest.raises(w.WorkerError):w.spool(cfg,job,{'text':'x'*(1024**2)})
     assert not list(tmp_path.iterdir())
+
+
+@pytest.mark.parametrize('channels',[1,2])
+def test_s7_validates_real_wave_reader_after_normalization(tmp_path,monkeypatch,channels):
+    import threading,time,wave
+    from s7 import worker as w
+    output=tmp_path/'normalized.wav'
+    def fake_ffmpeg(*args,**kwargs):
+        with wave.open(str(output),'wb') as audio:
+            audio.setnchannels(channels);audio.setsampwidth(2);audio.setframerate(16000)
+            audio.writeframes(bytes(16000*2*channels))
+    monkeypatch.setattr(w,'run_bounded',fake_ffmpeg)
+    if channels==1:
+        assert w.decode_audio(tmp_path/'input.wav',output,time.time()+10,threading.Event(),'wav')==1
+    else:
+        with pytest.raises(w.WorkerError):
+            w.decode_audio(tmp_path/'input.wav',output,time.time()+10,threading.Event(),'wav')
