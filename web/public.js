@@ -87,6 +87,7 @@ function renderReader(){
  const content=$('preview-text');content.replaceChildren();content.classList.toggle('plain-reading',readerMode==='plain');
  for(const b of document.querySelectorAll('[data-reader-mode]')){const active=b.dataset.readerMode===readerMode;b.classList.toggle('active',active);b.setAttribute('aria-pressed',String(active))}
  if(!readerData)return;
+ if(readerData.result_state==='partial')content.append(el('p','partial-warning',t('partialHint')));
  const segments=readingBlocks(readerData.segments||[]);
  if(readerMode==='plain'||!segments.length){const paragraphs=segments.length?segments.map(s=>s.text):currentTranscript.split(/\n\s*\n/);for(const paragraph of paragraphs)content.append(el('p','reader-paragraph',paragraph));return}
  for(const segment of segments){const row=el('div','reader-row');const time=el('time','reader-time',timestamp(segment.start));time.title=`${timestamp(segment.start)} – ${timestamp(segment.end)}`;row.append(time,el('p','reader-paragraph',segment.text.trim()));content.append(row)}
@@ -121,15 +122,16 @@ function updateJobCard(card,j){
  card.querySelector('.transcript-title').textContent=j.title||'Transcript';
  card.querySelector('.transcript-date').textContent=date(j.created);
  const meta=card.querySelector('.transcript-card-meta');
- const stateText=t(j.status==='done'?'readyState':j.status==='running'?(j.stage||'transcribing'):j.status)
+ const badgeState=j.status==='done'&&j.result_state==='partial'?'partial':j.status;
+ const stateText=t(j.status==='done'?(j.result_state==='partial'?'partialState':'readyState'):j.status==='running'?(j.stage||'transcribing'):j.status)
   +(j.status==='queued'&&j.position?' · #'+j.position:'')
   +(j.status==='running'&&Number.isFinite(j.progress)&&j.progress>0?' · '+Math.round(j.progress)+'%':'');
  let state=meta.querySelector('.badge');
  if(stageChanged){
-  const updated=el('span','badge state-'+j.status+' state-arrive',stateText);
+  const updated=el('span','badge state-'+badgeState+' state-arrive',stateText);
   state.replaceWith(updated);state=updated;
  }else{
-  state.className='badge state-'+j.status;
+  state.className='badge state-'+badgeState;
   if(state.textContent!==stateText)state.textContent=stateText;
  }
  if(!state.textContent)state.textContent=stateText;
@@ -158,6 +160,8 @@ function updateJobCard(card,j){
   if(!error){error=el('p','error small job-error');activity.after(error)}
   error.textContent=t('error');
  }else if(error)error.remove();
+ let warning=card.querySelector('.job-warning');
+ if(j.status==='done'&&j.result_state==='partial'){if(!warning){warning=el('p','small partial-warning job-warning');activity.after(warning)}warning.textContent=t('partialHint')}else if(warning)warning.remove();
  let actions=card.querySelector('.transcript-card-actions');
  if(j.status!=='done'){if(actions)actions.remove();return}
  if(!actions){

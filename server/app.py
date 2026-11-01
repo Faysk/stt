@@ -69,6 +69,7 @@ def init():
         CREATE INDEX IF NOT EXISTS jobs_expires ON jobs(expires);
         CREATE TABLE IF NOT EXISTS settings (id INTEGER PRIMARY KEY, value TEXT);
         CREATE TABLE IF NOT EXISTS workers (id TEXT PRIMARY KEY, seen REAL, info TEXT);
+        CREATE TABLE IF NOT EXISTS worker_controls (id TEXT PRIMARY KEY, enabled INTEGER NOT NULL DEFAULT 1);
         CREATE TABLE IF NOT EXISTS admission (client TEXT, created REAL);
         CREATE TABLE IF NOT EXISTS upload_slots (id TEXT PRIMARY KEY, owner TEXT NOT NULL, created REAL NOT NULL);
         ''')
@@ -441,10 +442,11 @@ def health():
         queue = c.execute("SELECT count(*) FROM jobs WHERE status IN ('queued','running')").fetchone()[0]
         cfg = json.loads(c.execute('SELECT value FROM settings WHERE id=1').fetchone()[0])
         recent = c.execute('SELECT count(*) FROM workers WHERE seen>? AND id=?', (time.time()-90,cfg['worker'])).fetchone()[0]
+        if not worker_enabled(c,cfg['worker']):recent=0
         waiting=c.execute("SELECT count(*) FROM jobs WHERE status='queued'").fetchone()[0]
         running=c.execute("SELECT count(*) FROM jobs WHERE status='running'").fetchone()[0]
         capacity=hosting.capabilities(c)
-        if not recent and getenv('STT_S7_ENABLED','0')=='1' and getenv('STT_S7_SIDE_WORKER','0')=='1':
+        if not recent and worker_enabled(c,'s7-edge') and getenv('STT_S7_ENABLED','0')=='1' and getenv('STT_S7_SIDE_WORKER','0')=='1':
             recent=c.execute("SELECT count(*) FROM workers WHERE id='s7-edge' AND seen>?",(time.time()-90,)).fetchone()[0]
     pressure='free' if queue==0 else 'short' if queue<=3 else 'medium' if queue<=10 else 'high'
     return dict(online=bool(recent), queue=queue,waiting=waiting,running=running,pressure=pressure,paused=cfg['paused'],retention_hours=24,**capacity)
@@ -633,7 +635,7 @@ class Settings(BaseModel):
 def dashboard():
     with db() as c:
         return dict(settings=json.loads(c.execute('SELECT value FROM settings WHERE id=1').fetchone()[0]),
-          workers=[dict(r) | {'info':json.loads(r['info'])} for r in c.execute('SELECT * FROM workers')],
+          workers=[dict(r) | {'info':json.loads(r['info']),'enabled':worker_enabled(c,r['id'])} for r in c.execute('SELECT * FROM workers')],
           jobs=[admin_job(r) for r in c.execute("SELECT * FROM jobs WHERE status IN ('queued','running','uploading') ORDER BY CASE WHEN status='running' THEN 0 ELSE 1 END,priority DESC,created,id")],
           counts={r['status']:r['n'] for r in c.execute('SELECT status,count(*) n FROM jobs GROUP BY status')},
           totals=dict(c.execute("SELECT count(*) jobs,coalesce(sum(duration),0) audio_seconds,coalesce(sum(elapsed),0) processing_seconds,coalesce(sum(input_bytes),0) bytes FROM jobs").fetchone()),
@@ -701,6 +703,47 @@ def job_detail(jid: str):
 
 class Priority(BaseModel):
     priority: int = Field(ge=0,le=9)
+
+
+def worker_enabled(connection, identity):
+    row=connection.execute('SELECT enabled FROM worker_controls WHERE id=?',(identity,)).fetchone()
+    return row is None or bool(row['enabled'])
+
+
+class WorkerPower(BaseModel):
+    enabled: bool
+
+
+@app.put('/api/admin/workers/{identity}/power',dependencies=[Depends(admin)])
+def worker_power(identity: str,value: WorkerPower):
+    with db() as c:
+        c.execute('BEGIN IMMEDIATE')
+        if not c.execute('SELECT 1 FROM workers WHERE id=?',(identity,)).fetchone():
+            raise HTTPException(404,'Executor não encontrado.')
+        c.execute('INSERT INTO worker_controls VALUES (?,?) ON CONFLICT(id) DO UPDATE SET enabled=excluded.enabled',(identity,int(value.enabled)))
+        if not value.enabled:
+            for job in c.execute("SELECT id FROM jobs WHERE status='running' AND worker=?",(identity,)).fetchall():
+                c.execute("UPDATE jobs SET status='queued',stage='queued',worker=NULL,lease=NULL,heartbeat=NULL,started=NULL,finished=NULL,progress=0,error=NULL WHERE id=?",(job['id'],))
+                obs.event(c,job['id'],'executor_disabled','admin',{'worker':identity})
+            c.execute("UPDATE model_preloads SET status='pending',updated=? WHERE worker=? AND status='running'",(time.time(),identity))
+        obs.event(c,None,'worker_power','admin',{'worker':identity,'enabled':value.enabled})
+    return {'enabled':value.enabled}
+
+
+@app.post('/api/admin/jobs/{jid}/retry',dependencies=[Depends(admin)])
+def retry_job(jid: str):
+    with db() as c:
+        c.execute('BEGIN IMMEDIATE')
+        row=c.execute('SELECT * FROM jobs WHERE id=?',(jid,)).fetchone()
+        if not row:raise HTTPException(404,'Trabalho não encontrado.')
+        retryable=row['status']=='failed' or row['status']=='done' and row['result_state']=='partial'
+        if not retryable or row['expires']<=time.time():
+            raise HTTPException(409,'Só é possível repetir falhas ou resultados parciais ainda válidos.')
+        if row['source']=='upload' and not (BLOB/jid/'input.media').is_file():
+            raise HTTPException(409,'Arquivo original indisponível.')
+        c.execute("UPDATE jobs SET status='queued',outcome=NULL,stage='queued',worker=NULL,lease=NULL,heartbeat=NULL,started=NULL,finished=NULL,progress=0,error=NULL,elapsed=NULL,duration=NULL WHERE id=?",(jid,))
+        obs.event(c,jid,'retried','admin')
+    return {'ok':True}
 
 @app.patch('/api/admin/jobs/{jid}/priority',dependencies=[Depends(admin)])
 def priority(jid: str,value: Priority):
@@ -784,6 +827,8 @@ def request_model_preload(value: ModelPreloadRequest):
     now=time.time()
     with db() as c:
         c.execute('BEGIN IMMEDIATE')
+        if not worker_enabled(c,value.worker):
+            raise HTTPException(409,'Executor desligado.')
         if not c.execute('SELECT 1 FROM workers WHERE id=?',(value.worker,)).fetchone():
             raise HTTPException(404,'Executor ainda não registrado.')
         existing=c.execute("""SELECT * FROM model_preloads WHERE worker=? AND model=?
@@ -807,6 +852,7 @@ def claim_model_preload(value: ModelPreloadClaim, request: Request):
     now=time.time()
     with db() as c:
         c.execute('BEGIN IMMEDIATE')
+        if not worker_enabled(c,value.worker):return {'operation':None}
         if c.execute("SELECT 1 FROM jobs WHERE status IN ('queued','running') LIMIT 1").fetchone():
             return {'operation':None}
         op=c.execute("""SELECT * FROM model_preloads WHERE worker=? AND status='pending'
@@ -829,6 +875,7 @@ def report_model_preload(pid: str,value: ModelPreloadReport, request: Request):
         raise HTTPException(400,'Estado inválido.')
     with db() as c:
         c.execute('BEGIN IMMEDIATE')
+        if not worker_enabled(c,value.worker):raise HTTPException(409,'Executor desligado.')
         op=c.execute('SELECT * FROM model_preloads WHERE id=? AND worker=?',
                      (pid,value.worker)).fetchone()
         if not op:
@@ -847,6 +894,27 @@ class Claim(BaseModel):
     id: str = Field(pattern=r'^[a-zA-Z0-9_-]{1,80}$')
     info: dict = Field(default_factory=dict)
 
+
+class WorkerControl(BaseModel):
+    id: str = Field(pattern=r'^[a-zA-Z0-9_-]{1,80}$')
+    applied_enabled: bool | None = None
+
+
+@app.post('/api/worker/control',dependencies=[Depends(worker)])
+def worker_control(value: WorkerControl,request: Request):
+    require_s7_scope(request,value.id)
+    with db() as c:
+        c.execute('BEGIN IMMEDIATE')
+        enabled=worker_enabled(c,value.id)
+        row=c.execute('SELECT info FROM workers WHERE id=?',(value.id,)).fetchone()
+        info=json.loads(row['info']) if row else {}
+        info['power_control_supported']=True
+        if value.applied_enabled is not None and value.applied_enabled==enabled:
+            info['power_state']='enabled' if enabled else 'disabled'
+        elif not enabled:info['power_state']='stopping'
+        c.execute('INSERT OR REPLACE INTO workers VALUES(?,?,?)',(value.id,time.time(),json.dumps(info)))
+    return {'enabled':enabled}
+
 def s7_eligible(item):
     return (item['source']=='upload' and 0 < (item['input_bytes'] or 0) <= 8*1024**2
             and ('duration' not in item.keys() or item['duration'] is None or item['duration']<=300)
@@ -861,6 +929,7 @@ def claim(w: Claim, request: Request):
     with db() as c:
         c.execute('BEGIN IMMEDIATE')
         c.execute('INSERT OR REPLACE INTO workers VALUES (?,?,?)', (w.id,now,info))
+        if not worker_enabled(c,w.id):return {'job':None,'enabled':False}
         cfg = json.loads(c.execute('SELECT value FROM settings WHERE id=1').fetchone()[0])
         side_s7 = (w.id == 's7-edge' and cfg['worker'] != 's7-edge'
                    and getenv('STT_S7_SIDE_WORKER','0')=='1')

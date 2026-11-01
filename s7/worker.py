@@ -92,7 +92,7 @@ def capabilities(cfg):
     ready = (cli.is_file() and os.access(cli,os.X_OK) and model.is_file()
              and model.stat().st_size >= 70*1024*1024 and shutil.which("ffmpeg") is not None)
     revision = "ggml-tiny"  # Model weight format; avoid pretending to have an HF CTranslate2 SHA.
-    return dict(system="Android",machine=os.uname().machine,engine="whisper.cpp",
+    return dict(power_control_supported=True,power_state="enabled",system="Android",machine=os.uname().machine,engine="whisper.cpp",
                 ram_total_mb=read_memtotal(),cpu=os.cpu_count(),
                 compute_types=dict(cpu=["float32"] if ready else [],cuda=[]),
                 models=[dict(id="tiny",revision=revision)] if ready else [],
@@ -264,7 +264,9 @@ def decode_audio(path,output,deadline,alive,input_type,storage_guard=None):
     return duration
 
 def parse_transcription(path,duration):
-    document=json.loads(path.read_text(encoding="utf-8"))
+    # whisper.cpp can emit individual byte-tokens that are not standalone
+    # UTF-8 in unused token metadata. Keep valid transcription text intact.
+    document=json.loads(path.read_bytes().decode('utf-8',errors='replace'))
     segments=[]
     for chunk in document.get("transcription",[]):
         offsets=chunk["offsets"]
@@ -278,8 +280,9 @@ def parse_transcription(path,duration):
         raise WorkerError("Invalid transcription JSON")
     lang=document.get("result",{}).get("language","")
     if not isinstance(lang,str) or len(lang)>20: lang=""
+    repaired=any('\ufffd' in segment['text'] for segment in segments)
     return dict(segments=segments,language=lang,duration=duration,
-                model_revision="ggml-tiny",result_state="complete" if segments else "silence")
+                model_revision="ggml-tiny",result_state="partial" if repaired else "complete" if segments else "silence")
 
 def run_job(cfg,job):
     if (not JOB_ID.fullmatch(str(job.get("id",""))) or job.get("model")!="tiny"
@@ -365,6 +368,19 @@ def main():
             raise WorkerError("Worker authentication denied; fix S7 key before restart")
         if status=="pending":
             time.sleep(SLEEP_SECONDS)
+            continue
+        try:
+            code,control=json_post(cfg,'/api/worker/control',{'id':ID},timeout=20)
+            if code!=200 or not isinstance(control,dict):
+                time.sleep(5)
+                continue
+            enabled=control.get('enabled') is True
+            json_post(cfg,'/api/worker/control',{'id':ID,'applied_enabled':enabled},timeout=20)
+            if not enabled:
+                time.sleep(5)
+                continue
+        except (OSError,URLError,TimeoutError,ValueError):
+            time.sleep(5)
             continue
         try:
             ensure_storage(cfg, reserve=JOB_RESERVE)

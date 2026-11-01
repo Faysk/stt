@@ -21,6 +21,16 @@ Quando um executor completo selecionado estiver online, a API permite os formato
 
 O Android bloqueia a leitura de CPU global por psutil. Esse sensor é apresentado como indisponível, preservando RAM, armazenamento, fila e histórico; nenhuma utilização zero é inventada.
 
+## Liga/desliga por executor
+
+O painel oferece seleção do principal e alimentação lógica separadas. **Desligar** persiste a escolha no coordenador, bloqueia claims e preloads, invalida o lease em andamento e devolve o mesmo trabalho à fila, preservando proprietário e expiração. O heartbeat rejeitado encerra o processo de inferência; a confirmação do agente aparece como “Desligado · modelo liberado”. Há um intervalo curto até o próximo heartbeat, normalmente até 15 s, além da finalização do processo.
+
+Permanece um agente leve para receber **Ligar**. Ele não carrega modelo, não consulta CUDA nem baixa pesos enquanto desligado. A inferência e o preload Windows são processos isolados; a consulta de capacidades também usa um processo curto para não reter contexto CUDA no agente. Os modelos já baixados continuam no disco e não são apagados pelo botão. Ligar não faz preload e não muda automaticamente a seleção do principal.
+
+A API e o conector do S7 continuam ligados quando somente seu executor é desligado. Sem outro executor elegível, os trabalhos aguardam. A escolha de desligado sobrevive ao reinício da API e do agente.
+
+Foi corrigida a leitura do JSON do whisper.cpp: tokens individuais podem conter sequências UTF-8 incompletas. Metadados de tokens não utilizados deixam de invalidar o texto completo; se houver substituição dentro do texto transcrito, o resultado é marcado como parcial. Falhas e resultados parciais ainda válidos, com arquivo original disponível, podem ser reprocessados pelo administrador. O trabalho `9003d6d7` foi recuperado no S7 em 108,11 s para 161,39 s de áudio, com resultado parcial sinalizado. O notebook confirmou o estado desligado e a ausência de bibliotecas CUDA/modelo nos processos do agente; ligar e desligar foram testados no painel sem alterar a seleção do S7.
+
 ## Retorno do notebook
 
 `scripts/supervise.py --install` instala o valor `FayskSTT` em `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`. O supervisor inicia **após login do usuário**, verifica os processos a cada 10 s, adota lançadores comprovadamente pertencentes ao ambiente do projeto e aplica espera de 30 s entre tentativas de recuperação. Um lock impede duas instâncias de supervisão.

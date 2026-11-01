@@ -140,6 +140,23 @@ vm.runInContext(fs.readFileSync('web/admin-enhancements.js','utf8'),ctx);
   assert.equal(nodes.device.value,'cpu');
   assert.equal(nodes.compute.value,'int8');
 
+  const notebookPower=nodes.workers.children[0].querySelectorAll('button').find(b=>b.dataset.powerWorker==='notebook');
+  notebookPower.fire('click',{stopPropagation(){}});
+  await new Promise(resolve=>setImmediate(resolve));
+  const off=calls.find(c=>c.path==='/api/admin/workers/notebook/power');
+  assert.equal(off.opts.method,'PUT');
+  assert.deepEqual(JSON.parse(off.opts.body),{enabled:false});
+  assert.equal(nodes.worker.value,'notebook','power action does not alter executor selection');
+  data.workers[0].enabled=false;
+  data.workers[0].info.power_state='disabled';
+  ctx.renderSettings(data);
+  const on=nodes.workers.children[0].querySelectorAll('button').find(b=>b.dataset.powerWorker==='notebook');
+  assert.equal(on.textContent,'Ligar');
+  assert.match(nodes.workers.children[0].textContent,/Desligado · modelo liberado/);
+  on.fire('click',{stopPropagation(){}});
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.deepEqual(JSON.parse(calls.filter(c=>c.path==='/api/admin/workers/notebook/power').at(-1).opts.body),{enabled:true});
+
   const html=fs.readFileSync('web/admin.html','utf8');
   assert.match(html,/id="configuration-state" hidden/);
   assert.doesNotMatch(html,/Seleção alternativa por menus|class="config-advanced"/);

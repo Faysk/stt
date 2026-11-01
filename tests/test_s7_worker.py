@@ -240,3 +240,14 @@ def test_s7_ogg_eligibility_still_restricts_size_and_source(tmp_path,monkeypatch
     assert not module.s7_eligible(dict(item,input_bytes=8*1024**2+1))
     assert not module.s7_eligible(dict(item,source='https://example.invalid'))
     assert not module.s7_eligible(dict(item,title='voice.m3u8'))
+
+
+@pytest.mark.parametrize('broken_segment',[False,True])
+def test_invalid_utf8_token_does_not_discard_valid_transcription(tmp_path,broken_segment):
+    from s7 import worker as w
+    path=tmp_path/'output.json'
+    text=b'Ol\xc3\xa1 mundo' if not broken_segment else b'Ol\xc3 mundo'
+    path.write_bytes(b'{"transcription":[{"offsets":{"from":0,"to":1000},"text":"'+text+b'","tokens":[{"text":"\xc3"}]}],"result":{"language":"pt"}}')
+    result=w.parse_transcription(path,1)
+    assert result['result_state']==('partial' if broken_segment else 'complete')
+    assert result['segments'][0]['text']==('Ol\ufffd mundo' if broken_segment else 'Olá mundo')

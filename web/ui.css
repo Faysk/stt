@@ -164,6 +164,12 @@
 .admin-page .model-card:focus-within {border-color:#5b8abb}
 .admin-page #settings-message {min-height:13px}
 .admin-page .worker-dependency {margin-top:10px}
+.admin-page .worker-power-actions {display:flex;align-items:center;gap:8px;border-top:1px solid var(--line);padding-top:12px;flex-wrap:wrap}
+.admin-page .worker-power-actions>span {flex:1;min-width:180px}
+.admin-page .worker-power-actions .button {padding:7px 12px}
+.admin-page .power-off-status {color:var(--accent)}
+.partial-warning {color:var(--orange);margin:8px 0;font-size:12px}
+.badge.state-partial {color:var(--orange);background:#f3a56110;border-color:#f3a56133}
 .admin-page .queue-blocked {color:var(--orange);max-width:360px;white-space:normal}
 .admin-page #settings .config-visuals {grid-template-columns:minmax(0,1fr) minmax(0,1fr)}
 .admin-page #settings #precision-cards {grid-template-columns:repeat(auto-fit,minmax(min(100%,230px),1fr))}

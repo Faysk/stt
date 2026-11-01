@@ -5,6 +5,7 @@
   let saving = false;
   let formRevision = 0;
   const pendingPreloads = new Set();
+  const pendingPower = new Set();
   const descriptions = {
     int16: ['INT16 · Inteiros de 16 bits', 'Pesos quantizáveis em INT16 e outras camadas FP32. Exige CPU compatível; usa mais RAM que INT8 e não garante ganho de velocidade.'],
     int8: ['INT8 · Quantizado', 'Menos memória; ponto de partida recomendado para CPU. Outras camadas usam ponto flutuante.'],
@@ -200,18 +201,42 @@
         ? 'Tiny · CPU · ' + (dashboardData.s7_formats || ['wav','mp3']).join(' / ').toUpperCase() + ' · até 8 MiB / 5 min'
         : 'Executor geral · modelos e formatos conforme configuração','worker-capability'));
       card.append(details);
-      card.dataset.worker = w.id;
       const selected = $('worker').value === w.id;
       card.classList.toggle('is-selected',selected);
       card.classList.toggle('is-offline',!online);
-      card.setAttribute('role','button');
-      card.setAttribute('tabindex','0');
-      card.setAttribute('aria-pressed',String(selected));
-      card.setAttribute('aria-label','Selecionar executor ' + w.id + (online ? ', online' : ', offline'));
+      card.setAttribute('role','group');
+      card.setAttribute('aria-label','Executor ' + w.id + (online ? ', conectado' : ', offline'));
       card.addEventListener('click',() => chooseWorker(w.id));
-      card.addEventListener('keydown',e => {
-        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); chooseWorker(w.id); }
+      const actions=node('div','','worker-power-actions');
+      const select=node('button',selected?'Selecionado':'Selecionar','button subtle');
+      select.type='button';select.dataset.worker=w.id;
+      select.setAttribute('aria-pressed',String(selected));
+      select.setAttribute('aria-label','Selecionar executor '+w.id);
+      select.addEventListener('click',event=>{event?.stopPropagation?.();chooseWorker(w.id)});
+      const enabled=w.enabled!==false;
+      const power=node('button',enabled?'Desligar':'Ligar','button '+(enabled?'subtle':'primary'));
+      power.type='button';power.dataset.powerWorker=w.id;
+      power.title=enabled?'Interromper o trabalho atual, devolver à fila e liberar RAM/VRAM':'Disponibilizar o executor sem carregar um modelo antecipadamente';
+      power.disabled=pendingPower.has(w.id);
+      power.setAttribute('aria-label',(enabled?'Desligar ':'Ligar ')+w.id);
+      const busy=(dashboardData.jobs||[]).some(job=>job.worker===w.id&&job.status==='running');
+      const state=enabled?(!online?'Offline':busy?'Processando':'Disponível'):info.power_state==='disabled'?'Desligado · modelo liberado':online?'Desligando · liberando recursos':'Desligamento solicitado · agente offline';
+      actions.append(node('span',state,'small '+(enabled?'muted':'power-off-status')),select,power);
+      power.addEventListener('click',async event=>{
+        event?.stopPropagation?.();
+        if(pendingPower.has(w.id))return;
+        pendingPower.add(w.id);power.disabled=true;
+        try{
+          await api('/api/admin/workers/'+encodeURIComponent(w.id)+'/power',
+            {method:'PUT',body:JSON.stringify({enabled:!enabled})});
+          $('settings-message').textContent=enabled
+            ? 'Desligando '+w.id+'. Trabalho ativo volta à fila; o modelo será liberado.'
+            : w.id+' ligado. O modelo só será carregado ao processar.';
+          await refresh(false);
+        }catch(error){$('settings-message').textContent=error.message}
+        finally{pendingPower.delete(w.id);power.disabled=false}
       });
+      card.append(actions);
     });
   }
   function renderSshTargets() {
@@ -323,7 +348,8 @@
   const originalRender = renderSettings;
   renderSettings = function(data) {
     const focused = document.activeElement;
-    const selector = focused?.dataset?.model ? '[data-model="' + focused.dataset.model + '"]'
+    const selector = focused?.dataset?.powerWorker ? '[data-power-worker="'+focused.dataset.powerWorker+'"]'
+      : focused?.dataset?.model ? '[data-model="' + focused.dataset.model + '"]'
       : focused?.dataset?.worker ? '[data-worker="' + focused.dataset.worker + '"]'
       : focused?.dataset?.device ? '[data-device="' + focused.dataset.device + '"]'
       : focused?.dataset?.compute ? '[data-compute="' + focused.dataset.compute + '"]' : null;

@@ -299,46 +299,22 @@ _CAPS_CACHE = (0.0, None)
 def worker_capabilities():
     global _CAPS_CACHE
     now=time.time()
-    if _CAPS_CACHE[1] is not None and now-_CAPS_CACHE[0] < 90:
+    if _CAPS_CACHE[1] is not None and now-_CAPS_CACHE[0]<90:
         return _CAPS_CACHE[1]
-    import psutil
-    caps={'system':platform.system(),'machine':platform.machine(),
-          'ram_total_mb':round(psutil.virtual_memory().total/1024**2),
-          'cpu':os.cpu_count(),'engine':'faster-whisper',
-          'qwen_models':_qwen_models(),'versions':package_versions(),
-          'compute_types':{'cpu':[],'cuda':[]},'models':[]}
+    flags={'creationflags':subprocess.CREATE_NO_WINDOW} if os.name=='nt' else {}
     try:
-        import ctranslate2
-        caps['compute_types']['cpu']=sorted(ctranslate2.get_supported_compute_types('cpu'))
-    except (ImportError,RuntimeError,ValueError,OSError):
-        pass
-    try:
-        flags={'creationflags':subprocess.CREATE_NO_WINDOW} if os.name=='nt' else {}
-        response=subprocess.run(['nvidia-smi','--query-gpu=name,memory.total,memory.free','--format=csv,noheader,nounits'],
-                                capture_output=True,text=True,timeout=3,**flags)
-        if response.returncode==0 and response.stdout.strip():
-            fields=[part.strip() for part in response.stdout.splitlines()[0].split(',')]
-            try:
-                available_vram=int(float(fields[2]))
-            except (ValueError,IndexError):
-                available_vram=None
-            caps['gpu']={'name':fields[0][:120],'vram_mb':int(float(fields[1])),
-                         'free_vram_mb':available_vram}
-            try:
-                import ctranslate2
-                caps['compute_types']['cuda']=sorted(ctranslate2.get_supported_compute_types('cuda'))
-            except (ImportError,RuntimeError,ValueError,OSError):
-                pass
-    except (OSError,ValueError,IndexError,subprocess.TimeoutExpired):
-        pass
-    try:
-        from server.catalog import installed_models
-        caps['models']=[{'id':item['id'],'revision':item['revision']}
-            for item in installed_models(getenv('STT_MODELS',str(ROOT/'models'))) if item['installed']]
-    except (OSError,ValueError):
-        pass
-    _CAPS_CACHE=(now,caps)
-    return caps
+        result=subprocess.run([sys.executable,'-m','server.capability_probe'],cwd=ROOT,
+                              capture_output=True,text=True,encoding='utf-8',timeout=25,**flags)
+        if result.returncode:raise ValueError('Inventory failed')
+        caps=json.loads(result.stdout)
+        if not isinstance(caps,dict):raise ValueError('Invalid inventory')
+        caps.update(power_control_supported=True,power_state='enabled')
+        _CAPS_CACHE=(now,caps)
+        return caps
+    except (OSError,ValueError,subprocess.TimeoutExpired):
+        return _CAPS_CACHE[1] or {'system':platform.system(),'engine':'faster-whisper',
+            'power_control_supported':True,'power_state':'enabled','models':[],
+            'compute_types':{'cpu':[],'cuda':[]}}
 
 def prepare_model(op):
     # Disk cache only. Run when no user job is queued; never claim warm VRAM.
@@ -390,28 +366,50 @@ def prepare_model(op):
 
 def main():
     print(f'Executor {IDENTITY} conectado a {BASE}',flush=True)
-    preload_thread=None
-    while True:
-        try:
-            if _drain_outbox():
-                time.sleep(5)
-                continue
-            r=client.post('/api/worker/claim',json={'id':IDENTITY,'info':worker_capabilities()})
-            r.raise_for_status()
-            job=r.json()['job']
-            if job: execute(job)
-            else:
-                if preload_thread is None or not preload_thread.is_alive():
-                    preload=client.post('/api/worker/model-preloads/claim',json={'worker':IDENTITY})
-                    preload.raise_for_status()
-                    operation=preload.json().get('operation')
-                    if operation:
-                        preload_thread=threading.Thread(target=prepare_model,
-                                                        args=(operation,),daemon=True)
-                        preload_thread.start()
-                time.sleep(5)
-        except (httpx.HTTPError,ValueError) as e:
-            print(f'Conexão: {type(e).__name__}; nova tentativa em 10s',flush=True)
-            time.sleep(10)
+    preload_proc=None
+    preload_path=None
+    try:
+        while True:
+            try:
+                if _drain_outbox():
+                    time.sleep(5)
+                    continue
+                control=client.post('/api/worker/control',json={'id':IDENTITY})
+                control.raise_for_status()
+                enabled=control.json().get('enabled') is True
+                if not enabled:
+                    _stop_child(preload_proc)
+                    preload_proc=None
+                    if preload_path:preload_path.unlink(missing_ok=True);preload_path=None
+                    client.post('/api/worker/control',json={'id':IDENTITY,'applied_enabled':False}).raise_for_status()
+                    time.sleep(5)
+                    continue
+                client.post('/api/worker/control',json={'id':IDENTITY,'applied_enabled':True}).raise_for_status()
+                r=client.post('/api/worker/claim',json={'id':IDENTITY,'info':worker_capabilities()})
+                r.raise_for_status()
+                job=r.json()['job']
+                if job:
+                    execute(job)
+                else:
+                    if preload_proc is None or preload_proc.poll() is not None:
+                        if preload_path:preload_path.unlink(missing_ok=True);preload_path=None
+                        operation=client.post('/api/worker/model-preloads/claim',json={'worker':IDENTITY})
+                        operation.raise_for_status()
+                        operation=operation.json().get('operation')
+                        if operation:
+                            root=Path(getenv('STT_TMP') or str(ROOT/'worker-tmp'))
+                            root.mkdir(parents=True,exist_ok=True)
+                            descriptor,path=tempfile.mkstemp(prefix='preload-',suffix='.json',dir=root)
+                            preload_path=Path(path)
+                            with os.fdopen(descriptor,'w',encoding='utf-8') as stream:json.dump(operation,stream)
+                            flags={'creationflags':subprocess.CREATE_NEW_PROCESS_GROUP|subprocess.CREATE_NO_WINDOW} if os.name=='nt' else {'start_new_session':True}
+                            preload_proc=subprocess.Popen([sys.executable,'-m','server.preload',str(preload_path)],cwd=ROOT,**flags)
+                    time.sleep(5)
+            except (httpx.HTTPError,ValueError,OSError) as error:
+                print('Conexão: '+type(error).__name__+'; nova tentativa em 10s',flush=True)
+                time.sleep(10)
+    finally:
+        _stop_child(preload_proc)
+        if preload_path:preload_path.unlink(missing_ok=True)
 
 if __name__=='__main__': main()
