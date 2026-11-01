@@ -1,6 +1,14 @@
 # Galaxy S7 Edge — worker nativo para stt.faysk.dev
 
-**Estado:** código integrado à API e cliente Termux. Não confundir com o cartão SSH da área administrativa. O executor só recebe jobs depois de provisionar chave exclusiva, instalar ffmpeg, publicar a API alterada, iniciar o cliente e **selecioná-lo explicitamente** no administrador.
+**Estado em 01/11/2026:** S7 Edge online como worker secundário supervisionado, com transcrição real concluída pela API pública. O notebook permanece como executor principal. A seleção no administrador permite torná-lo principal; não é necessária para o modo secundário já habilitado nesta instalação.
+
+## Validação ponta a ponta — 01/11/2026
+
+Upload público do áudio de referência JFK, WAV de 11 segundos, concluído no `s7-edge` com Tiny, CPU e duas threads. Tempo total do worker: **10,00 s**, incluindo preparação e inferência; CPU: 17,90 s; pico RSS: 174,46 MiB. TXT, Markdown, SRT e JSON foram baixados pela sessão proprietária e conferidos. Outbox e workspace vazios após confirmação. O aparelho continuou reportando por HTTPS após remover o encaminhamento SSH via USB.
+
+O teste encontrou um erro preexistente de leitura WAV (`getchannels` em vez de `getnchannels`), corrigido na [PR #89](https://github.com/Faysk/stt/pull/89), com regressão usando WAV real. O mesmo job terminou na terceira tentativa, após recuperação dos leases anteriores. A supervisão foi integrada na [PR #88](https://github.com/Faysk/stt/pull/88).
+
+O painel público confirmou S7 online e normalizou sua seleção para Tiny/CPU/float32; a configuração salva continuou notebook/small/GPU/float16. Não houve troca do executor principal nem reinício da API nesta validação. Ainda faltam reboot físico, teste prolongado com tela apagada/Doze, temperatura e qualidade em português. MP3 é elegível pelo contrato, mas este ensaio físico usou WAV.
 
 ## Execução supervisionada (implementação de 01/11/2026)
 
@@ -72,8 +80,8 @@ Aparecerá `s7-edge` no painel após o primeiro `POST /api/worker/claim`. Evite 
 
 ## Verificações e limites
 
-- O script **não** cria autostart persistente, service supervisor ou cron; se o Termux fechar, o S7 ficará offline. Supervisão/autostart só após homologar uma transcrição real de ponta a ponta e medir memória, impacto térmico e observabilidade.
+- O provisionamento básico não cria autostart. O instalador `setup_s7_service.py` descrito acima instala supervisão e entrada Termux:Boot; recuperação após reboot físico e estabilidade prolongada ainda precisam de ensaio.
 - O modelo GGML é distinto do cache CTranslate2 do Windows; pedidos de preload do painel para o S7 são desabilitados.
 - O resultado e o status do trabalho ficam na API central. O S7 mantém temporariamente cópia da mídia durante inferência em pasta privada, que é apagada ao finalizar; um resultado pendente da API fica em outbox privado até confirmação ou expiração.
 - Queda de energia, Doze do Android e troca de rede podem encerrar o processo. Não divulgar tokens e não deixar o Android 8 com portas abertas na internet.
-- Não declarar S7 **em produção** até conferir o primeiro job contra API publicada e controles de limite/permissão; os testes CI não são substitutos.
+- A primeira transcrição pública foi conferida; isso habilita uso experimental como secundário, sem comprovar estabilidade sustentada ou qualidade para todos os idiomas.
