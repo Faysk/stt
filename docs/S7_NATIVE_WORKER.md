@@ -2,6 +2,21 @@
 
 **Estado:** código integrado à API e cliente Termux. Não confundir com o cartão SSH da área administrativa. O executor só recebe jobs depois de provisionar chave exclusiva, instalar ffmpeg, publicar a API alterada, iniciar o cliente e **selecioná-lo explicitamente** no administrador.
 
+## Execução supervisionada (implementação de 01/11/2026)
+
+`scripts/setup_s7_service.py` provisiona uma árvore runit **exclusiva do STT**, sem iniciar/parar os serviços do Observatory. Usa SSH com chave de host já conhecida; um encaminhamento USB pode usar `--host-key-alias` para conferir a identidade original, sem desativar StrictHostKeyChecking.
+
+O padrão é prévia somente leitura. Após revisar, usar `--apply --start`, fornecendo `--host`, `--port`, `--user` e `--identity` de uma conexão já autorizada. Nenhuma chave é criada, transferida ou impressa por esse instalador; a chave restrita do worker deve existir previamente.
+
+- Código canônico, configuração de log e logs rotacionados ficam no microSD em `~/storage/external-1/stt-worker`; quatro arquivos de log de até 64 KiB, além do corrente.
+- A cópia de execução e os pequenos entrypoints permanecem no ambiente privado do Termux: código modificável no armazenamento compartilhado não é executado com acesso à chave. Temporários e outbox usam cache privado `~/.cache/stt-worker` (0700), reconstruível a partir dos originais que continuam na API.
+- Antes de aceitar trabalho, reserva 16 MiB para a operação; mantém piso de 2 GiB livres no interno e orçamento de 64 MiB para o workspace. Download e subprocessos revalidam armazenamento; um subprocesso é encerrado se o orçamento for ultrapassado. Resultado de outbox limitado a 1 MiB.
+- Runit reinicia somente o processo STT, com pausa de 15s após saída. `sv status ~/.local/share/stt-services/worker` mostra o estado. O instalador não reinicia uma instância já ativa para atualizar código: drenar o trabalho antes de uma atualização supervisionada.
+- O entrypoint exclusivo `~/.termux/boot/20-stt-worker` espera até cinco minutos pelo microSD; nunca usa o interno como substituto de logs/dados persistentes. Requer Termux:Boot já instalado e habilitado. Configurar o script não comprova recuperação após reboot físico.
+- O instalador recusa migração se houver resultados pendentes no antigo workspace. Não apagar outbox para desbloquear a instalação.
+
+Os scripts `s7/service-run.sh`, `start-service.sh` e `boot-service.sh` são as fontes dos entrypoints. Nenhuma destas mudanças muda o executor principal configurado na API ou instala outros modelos. A ativação real continua dependendo das flags da API e da validação E2E.
+
 ## Compatibilidade comprovada
 
 Em 30/10/2026, o Samsung S7 Edge real (Android 8, arm64-v8a) compilou `whisper.cpp` no Termux via Clang/CMake. O commit observado foi `d1be6fd` (rótulo CMake 1.9.5-dev; aviso do tag anotado durante clone). `whisper-cli` com Tiny multilíngue, áudio JFK de 11 s e 2 threads completou a inferência em **6,39177 s**: RTF aproximado **0,581** em apenas um ensaio. Runtime CPU (NEON/ARM FMA/OpenMP); qualidade em PT-BR e desempenho sustentado não medidos.

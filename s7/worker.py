@@ -31,6 +31,9 @@ CLIENT_USER_AGENT = "Mozilla/5.0"
 MAX_BYTES = 8 * 1024 * 1024
 MAX_SECONDS = 120
 SLEEP_SECONDS = 5
+MIN_INTERNAL_FREE = 2 * 1024**3
+WORKSPACE_BUDGET = 64 * 1024**2
+JOB_RESERVE = 16 * 1024**2
 JOB_ID = re.compile(r"^[a-zA-Z0-9_-]{1,80}$")
 
 class WorkerError(Exception):
@@ -57,12 +60,30 @@ def config_from_environment():
         raise WorkerError("S7 key is too short")
     if work.is_symlink():
         raise WorkerError("Worker workspace cannot be a symlink")
+    if not work.exists() and shutil.disk_usage(Path.home()).free < MIN_INTERNAL_FREE + JOB_RESERVE:
+        raise WorkerError("Internal storage reserve unavailable")
     work.mkdir(parents=True,exist_ok=True,mode=0o700)
     if not work.is_dir() or work.stat().st_mode & 0o077:
         raise WorkerError("Worker workspace must be private (chmod 700)")
     if work == root or root in work.parents or work in root.parents:
         raise WorkerError("Worker workspace must not contain the model repository")
     return dict(root=root,work=work,url=url,key=key)
+
+
+def ensure_storage(cfg, reserve=0):
+    """Private reconstructible media cache: 64 MiB maximum, 2 GiB internal floor."""
+    if shutil.disk_usage(Path.home()).free < MIN_INTERNAL_FREE + reserve:
+        raise WorkerError("Internal storage reserve unavailable")
+    if shutil.disk_usage(cfg['work']).free < reserve:
+        raise WorkerError("Workspace storage unavailable")
+    used = 0
+    for path in cfg['work'].rglob('*'):
+        if path.is_symlink():
+            raise WorkerError("Workspace contains symlink")
+        if path.is_file():
+            used += path.stat().st_size
+        if used + reserve > WORKSPACE_BUDGET:
+            raise WorkerError("Workspace budget exceeded")
 
 def capabilities(cfg):
     cli = cfg["root"] / "build" / "bin" / "whisper-cli"
@@ -140,8 +161,13 @@ def spool(cfg,job,result):
         raise WorkerError("Untrusted job ID")
     digest=hashlib.sha256(job["lease"].encode()).hexdigest()[:20]
     path=cfg["work"] / ("result-" + name + "-" + digest + ".json")
-    atomic_json(path,{"id":name,"lease":job["lease"],"expires":job["expires"],
-                      "payload":dict(result,lease=job["lease"]),"next_try":0,"attempts":0})
+    data={"id":name,"lease":job["lease"],"expires":job["expires"],
+          "payload":dict(result,lease=job["lease"]),"next_try":0,"attempts":0}
+    size=len(json.dumps(data,ensure_ascii=False).encode('utf-8'))
+    if size>1024**2:
+        raise WorkerError("Result exceeds outbox budget")
+    ensure_storage(cfg, reserve=2*size)
+    atomic_json(path,data)
     return path
 
 def deliver(cfg,path):
@@ -203,12 +229,14 @@ def kill(proc):
             except ProcessLookupError: pass
             proc.wait(timeout=3)
 
-def run_bounded(argv,deadline,stage,alive,heartbeat):
+def run_bounded(argv,deadline,stage,alive,heartbeat,storage_guard=None):
     proc=None
     try:
         proc=subprocess.Popen(argv,stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,
                               stderr=subprocess.DEVNULL,start_new_session=True)
         while proc.poll() is None:
+            if storage_guard:
+                storage_guard()
             if alive.is_set() or time.time()>=deadline:
                 raise WorkerError("Lease lost or time budget exceeded")
             time.sleep(0.5)
@@ -217,7 +245,7 @@ def run_bounded(argv,deadline,stage,alive,heartbeat):
     finally:
         kill(proc)
 
-def decode_audio(path,output,deadline,alive,input_type):
+def decode_audio(path,output,deadline,alive,input_type,storage_guard=None):
     # Force a strict demuxer from the server-signed job to prevent a disguised
     # playlist/manifest asking FFmpeg to fetch network or private local files.
     if input_type not in ("wav","mp3"):
@@ -225,7 +253,7 @@ def decode_audio(path,output,deadline,alive,input_type):
     command=["ffmpeg","-nostdin","-hide_banner","-loglevel","error","-y",
              "-protocol_whitelist","file,pipe","-f",input_type,"-i",str(path),"-vn","-t",str(MAX_SECONDS+2),
              "-ac","1","-ar","16000","-c:a","pcm_s16le",str(output)]
-    run_bounded(command,deadline,"decode",alive,None)
+    run_bounded(command,deadline,"decode",alive,None,storage_guard)
     import wave
     with wave.open(str(output),"rb") as audio:
         if (audio.getchannels()!=1 or audio.getsampwidth()!=2 or audio.getframerate()!=16000):
@@ -278,6 +306,7 @@ def run_job(cfg,job):
     before=resource.getrusage(resource.RUSAGE_CHILDREN) if resource else None
     result=None
     try:
+        ensure_storage(cfg, reserve=JOB_RESERVE)
         with tempfile.TemporaryDirectory(prefix="job-",dir=cfg["work"]) as name:
             folder=Path(name)
             media=folder/"input.media"
@@ -288,6 +317,7 @@ def run_job(cfg,job):
                 with media.open("xb") as destination:
                     size=0
                     while True:
+                        ensure_storage(cfg)
                         part=response.read(65536)
                         if not part: break
                         size+=len(part)
@@ -297,14 +327,14 @@ def run_job(cfg,job):
             finally: response.close()
             stage["value"]="loading"
             wav=folder/"audio.wav"
-            duration=decode_audio(media,wav,deadline,lost,job["input_type"])
+            duration=decode_audio(media,wav,deadline,lost,job["input_type"],lambda:ensure_storage(cfg))
             stage["value"]="transcribing"
             cli=cfg["root"]/"build"/"bin"/"whisper-cli"
             model=cfg["root"]/"models"/"ggml-tiny.bin"
             prefix=folder/"whisper-output"
             cmd=[str(cli),"-ng","-m",str(model),"-f",str(wav),"-t","2","-l","auto",
                  "-oj","-of",str(prefix),"-np"]
-            run_bounded(cmd,deadline,"inference",lost,None)
+            run_bounded(cmd,deadline,"inference",lost,None,lambda:ensure_storage(cfg))
             stage["value"]="finishing"
             result=parse_transcription(Path(str(prefix)+".json"),duration)
             result["input_bytes"]=size
@@ -327,7 +357,8 @@ def run_job(cfg,job):
 
 def main():
     cfg=config_from_environment()
-    print("S7 worker ready for outbound HTTPS (no public job until admin selects it)",flush=True)
+    print("S7 worker ready (scoped HTTPS; compatible jobs only)",flush=True)
+    storage_blocked=False
     while True:
         status=drain(cfg)
         if status=="auth_blocked":
@@ -335,6 +366,15 @@ def main():
         if status=="pending":
             time.sleep(SLEEP_SECONDS)
             continue
+        try:
+            ensure_storage(cfg, reserve=JOB_RESERVE)
+        except WorkerError:
+            if not storage_blocked:
+                print("S7 worker waiting for storage budget",flush=True)
+            storage_blocked=True
+            time.sleep(30)
+            continue
+        storage_blocked=False
         caps=capabilities(cfg)
         try:
             code,reply=json_post(cfg,"/api/worker/claim",{"id":ID,"info":caps},timeout=20)
