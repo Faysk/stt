@@ -1,20 +1,22 @@
-.admin-locked .admin-main #admin-login{display:block;width:min(100%,420px);padding:28px;border:1px solid var(--line);border-radius:16px;background:var(--panel,#151b26);text-align:center}
-.auth-brand{display:flex;justify-content:center;margin-bottom:24px}.auth-brand img{margin-right:8px}
-#qr-login h1,.approval-card h1{font-size:23px;line-height:1.3;margin:12px 0}
-#qr-login>p,.approval-card>p{font-size:13px;line-height:1.6}
-.qr-frame{background:white;padding:12px;border-radius:14px;width:264px;max-width:100%;margin:22px auto;box-shadow:0 0 35px #439cff18}
-.qr-frame img{display:block;width:100%;height:auto;image-rendering:pixelated}
-.auth-code{display:block;font:600 30px/1.5 Consolas,monospace;letter-spacing:.18em;color:var(--accent);margin:6px 0}
-#qr-compare>span,#qr-expiry{display:block;font-size:11px}
-.auth-actions{display:flex;gap:10px;justify-content:center;flex-wrap:wrap;margin:22px 0 12px}
-#legacy-login{border-top:1px solid var(--line);padding-top:16px;margin-top:24px;text-align:left}
-#legacy-login summary{font-size:11px;color:var(--muted);cursor:pointer}
-.admin-locked #admin-login .legacy-fields{display:flex;gap:8px;align-items:center;padding-top:14px}
-.admin-locked #admin-login #admin-key{flex:1;min-width:0;width:auto;margin:0}
-.admin-locked #admin-login #login{position:static;transform:none;flex-shrink:0;margin:0}
-.approval-page{min-height:100dvh;display:grid;place-items:center;padding:22px;background:var(--bg,#0e1117)}
-.approval-card{width:min(100%,430px);padding:28px;border:1px solid var(--line);border-radius:16px;background:var(--panel,#151b26);text-align:center}
-.auth-confirm{display:flex;align-items:center;gap:10px;text-align:left;font-size:13px;margin-top:20px;padding:14px;border:1px solid var(--line);border-radius:8px}
-.auth-confirm input{accent-color:var(--accent);width:18px;height:18px;flex-shrink:0}
-.approval-card button{min-height:44px}.approval-card>a:last-child{display:block;margin-top:24px}
-@media(max-width:480px){.admin-locked .admin-main #admin-login,.approval-card{padding:22px 18px}.qr-frame{width:240px}.approval-page{padding:16px}}
+.admin-locked{background:#0d1118}
+.admin-locked .admin-main #admin-login{display:block;width:min(312px,100%);max-width:none;margin:0;padding:0;border:0;background:none;box-shadow:none}
+.admin-locked #admin-message{position:absolute;width:1px;height:1px;padding:0;overflow:hidden;clip-path:inset(50%)}
+.auth-sr{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
+.qr-frame{width:100%;padding:12px;background:#fff;border-radius:18px}
+#qr-link{position:relative;display:block;line-height:0;border-radius:8px}
+#qr-link:focus-visible{outline:3px solid #60adff;outline-offset:18px}
+#login-qr{display:block;width:100%;height:auto;image-rendering:pixelated}
+#qr-link .qr-logo{position:absolute;top:50%;left:50%;width:17%;height:auto;transform:translate(-50%,-50%);border:5px solid white;border-radius:12px;background:white;box-sizing:content-box;pointer-events:none}
+.auth-retry,.auth-touch{display:grid;place-items:center;width:76px;height:76px;padding:0;margin:0 auto;border:0;background:none;border-radius:18px;cursor:pointer}
+.auth-retry:focus-visible,.auth-touch:focus-visible{outline:2px solid #60adff;outline-offset:6px}
+#legacy-login .legacy-fields{display:flex;gap:10px;align-items:center}
+.admin-locked #admin-login #admin-key{min-width:0;width:auto;flex:1;margin:0}
+.admin-locked #admin-login #login{position:static;transform:none;margin:0;flex-shrink:0}
+.approval-page{min-height:100dvh;display:grid;place-items:center;margin:0;padding:24px;background:#0d1118}
+.approval-card{display:grid;justify-items:center;gap:12px;width:100%;border:0;background:none}
+.auth-touch img{width:64px;height:64px}.auth-touch:disabled{cursor:default}
+.approval-card[data-state="working"] .auth-touch{animation:auth-pulse 1.6s ease-in-out infinite}
+.approval-done{width:40px;height:40px;color:#60adff}
+@keyframes auth-pulse{50%{opacity:.45}}
+@media(prefers-reduced-motion:reduce){.approval-card[data-state="working"] .auth-touch{animation:none}}
+@media(max-width:480px){.admin-locked .admin-main #admin-login{width:min(280px,100%)}.qr-frame{padding:10px}}

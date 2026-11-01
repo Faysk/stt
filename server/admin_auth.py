@@ -211,7 +211,8 @@ def install(app, db, getenv):
     def qr_result(row):
         url = ORIGIN+'/admin-approve.html?request='+row['id']
         # Only a server-built same-origin URL, rendered by a local pinned library.
-        image = qrcode.make(url, image_factory=qrcode.image.svg.SvgPathImage, border=4)
+        image = qrcode.make(url, image_factory=qrcode.image.svg.SvgPathImage, border=4,
+                            error_correction=qrcode.constants.ERROR_CORRECT_H)
         out = io.BytesIO()
         image.save(out)
         return dict(request=row['id'], code=row['code'], expires=row['expires'],
@@ -251,7 +252,7 @@ def install(app, db, getenv):
 
     @app.post(prefix+'/qr/status')
     async def status(request: Request):
-        require_enabled(request, 'poll', 60)
+        require_enabled(request, 'poll', 120)
         data = await payload(request)
         with db() as c:
             row = desktop_request(c, request, data.get('request',''))

@@ -35,9 +35,10 @@ def test_admin_login_has_qr_and_discreet_legacy_recovery():
     assert elements['login-qr'][0] == 'img'
     assert elements['login-qr'][1]['alt']
     assert elements['qr-start'][0] == 'button'
-    assert elements['qr-code'][0] == 'strong'
+    assert markup.visible_text == []
+    assert any(attrs.get('class') == 'qr-logo' for _, attrs in markup.elements)
     assert elements['qr-status'][1]['aria-live'] == 'polite'
-    assert elements['legacy-login'][0] == 'details'
+    assert elements['legacy-login'][0] == 'div'
     assert elements['admin-key'][1]['type'] == 'password'
     assert elements['admin-key'][1]['autocomplete'] == 'off'
     assert elements['login'][1]['aria-label']
