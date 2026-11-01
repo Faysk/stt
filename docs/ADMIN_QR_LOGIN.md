@@ -15,9 +15,11 @@ Implementação da [issue #84](https://github.com/Faysk/stt/issues/84), entregue
 
 ## Experiência
 
-O PC exibe um QR de 90 segundos e um código de seis dígitos. O celular abre a página de aprovação no mesmo domínio, mostra contexto reduzido do navegador e pede que o operador confira o código. Aprovar ou rejeitar exige uma assinatura da passkey autorizada e verificação do usuário pelo autenticador (digital/PIN). Só o navegador que criou o pedido recebe a sessão administrativa. A página do celular não recebe essa sessão.
+O PC exibe apenas um QR com o logo no centro, renovado automaticamente a cada expiração. Não há título, código, cronômetro nem controles visíveis no fluxo normal. O celular abre a página do mesmo domínio e inicia a autenticação nativa; após digital/PIN, a assertion é enviada imediatamente e o PC recebe sua sessão. Não há checkbox nem confirmação adicional do aplicativo. Se o navegador cancelar/exigir gesto, um toque no logo tenta novamente. Prompts do autenticador/gerenciador de passkeys pertencem ao navegador e não podem ser suprimidos pelo STT.
 
-O QR contém uma URL com ID público aleatório de 256 bits. O vínculo secreto do PC fica em cookie HttpOnly independente. O código curto é uma conferência humana, não senha. O sistema mantém uma única credencial autorizada. Ela pode ser sincronizada pelo gerenciador de passkeys: **isso não comprova exclusividade física do S23+**. O QR customizado também não comprova proximidade Bluetooth; não aprove QR recebido de terceiros.
+O QR contém uma URL com ID público aleatório de 256 bits. O vínculo secreto do PC fica em cookie HttpOnly independente. O sistema mantém uma única credencial autorizada. Ela pode ser sincronizada pelo gerenciador de passkeys: **isso não comprova exclusividade física do S23+**. O QR customizado também não comprova proximidade Bluetooth. A conferência humana de código foi retirada por decisão explícita do operador em 01/11/2026; permanece o limite de relay/phishing de um QR compartilhado, sem alegar prova de proximidade. Assinatura, UV, origin, RP ID, expiração e vínculo de browser continuam obrigatórios.
+
+O QR usa correção de erro H e logo com área restrita, preservando a margem de leitura. A captura renderizada com logo foi decodificada com ZXing no teste local. Textos de estado permanecem disponíveis para leitores de tela. Falhas podem mostrar apenas o logo como botão de nova tentativa.
 
 ## Configuração e ativação em staging
 
@@ -29,6 +31,7 @@ STT_ADMIN_LEGACY_ENABLED=1
 - QR desligado: fluxo antigo permanece disponível, sem cadastro público.
 - QR ligado: a página cria automaticamente um pedido e tenta restaurar uma sessão válida.
 - Legado desligado: `x-admin-key` deixa de autorizar rotas administrativas. Só desligar após pareamento e validação de recuperação; a CLI local continua disponível.
+- Recuperação legada não aparece na tela QR. Quando habilitada, abrir `/admin.html?recovery=1` para acessar o campo de chave.
 - RP ID fixo: `stt.faysk.dev`; origin exata: `https://stt.faysk.dev`. Não há variável que libere origins arbitrárias.
 
 Aplicar primeiro dependências e backend em ambiente isolado, com snapshot SQLite, depois assets. O deploy Windows e o Worker são etapas diferentes; seguir `OPERATOR_PUBLISH.md`, preservar Tunnel e trabalhos em execução. A implementação não autoriza restart ou ativação automática. Teste local com RP substituído em memória serve apenas para QA da interface, não para cadastrar passkeys de produção.
