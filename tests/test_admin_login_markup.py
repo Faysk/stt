@@ -28,23 +28,22 @@ class LoginParser(HTMLParser):
             self.inside = False
 
 
-def test_admin_login_contains_only_accessible_key_field_and_icon_button():
+def test_admin_login_has_qr_and_discreet_legacy_recovery():
     markup = LoginParser()
     markup.feed((ROOT / "web/admin.html").read_text(encoding="utf-8"))
-    assert [tag for tag, _ in markup.elements] == ["section", "input", "button", "svg", "path"]
-    assert markup.visible_text == []
-
-    key = markup.elements[1][1]
-    submit = markup.elements[2][1]
-    icon = markup.elements[3][1]
-    assert key["id"] == "admin-key"
-    assert key["type"] == "password"
-    assert key["aria-label"]
-    assert key.get("autocomplete") == "off"
-    assert submit["id"] == "login"
-    assert submit["type"] == "button"
-    assert submit["aria-label"]
-    assert icon["aria-hidden"] == "true"
+    elements = {attrs['id']: (tag, attrs) for tag, attrs in markup.elements if 'id' in attrs}
+    assert elements['login-qr'][0] == 'img'
+    assert elements['login-qr'][1]['alt']
+    assert elements['qr-start'][0] == 'button'
+    assert elements['qr-code'][0] == 'strong'
+    assert elements['qr-status'][1]['aria-live'] == 'polite'
+    assert elements['legacy-login'][0] == 'details'
+    assert elements['admin-key'][1]['type'] == 'password'
+    assert elements['admin-key'][1]['autocomplete'] == 'off'
+    assert elements['login'][1]['aria-label']
+    auth = (ROOT / 'web/admin-auth.js').read_text(encoding='utf-8')
+    assert 'localStorage' not in auth and 'sessionStorage' not in auth
+    assert 'innerHTML' not in auth.replace('never innerHTML', '')
 
 
 def test_admin_login_is_scoped_and_keeps_keyboard_submission():

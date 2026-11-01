@@ -56,3 +56,7 @@ O SSH **não** instala Python, modelos, CTranslate2 ou um worker. O dispositivo 
 - [S7 Edge: evidências de hardware, telemetria e viabilidade como worker](S7_EDGE_INTEGRATION.md).
 
 - [Qwen e benchmarks](QWEN_AND_BENCHMARK.md)
+
+## Acesso administrativo por celular
+
+Fluxo QR/passkey, configuração e recuperação local: [Login por QR](ADMIN_QR_LOGIN.md). A feature permanece desligada por padrão até homologação no S23+.

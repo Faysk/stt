@@ -23,6 +23,7 @@ from server import observability as obs
 from server.metrics import validate as validate_metrics
 from server.config import getenv
 from server.ssh_targets import ssh_targets
+from server import admin_auth
 
 load_dotenv()
 ROOT = Path(__file__).resolve().parents[1]
@@ -84,6 +85,7 @@ def init():
         for row in c.execute("SELECT id,owner FROM jobs WHERE client_tag IS NULL AND owner!=''").fetchall():
             c.execute('UPDATE jobs SET client_tag=? WHERE id=?',(client_tag(row['owner']),row['id']))
         obs.install(c)
+        admin_auth.install_schema(c)
         c.execute("""CREATE TABLE IF NOT EXISTS model_preloads (
             id TEXT PRIMARY KEY, worker TEXT NOT NULL, model TEXT NOT NULL,
             status TEXT NOT NULL, created REAL NOT NULL, updated REAL NOT NULL,
@@ -132,6 +134,7 @@ def maintenance():
                 continue
     with db() as c:
         c.execute('BEGIN IMMEDIATE')
+        admin_auth.cleanup(c, now)
         c.execute("UPDATE model_preloads SET status='pending',updated=?,error='REQUEUED_AFTER_TIMEOUT' WHERE status='running' AND updated<?",(now,now-600))
         c.execute("DELETE FROM model_preloads WHERE status IN ('ready','failed') AND updated<?",(now-7*TTL,))
         c.execute("""UPDATE jobs SET status='expired',stage='expired',owner='',
@@ -216,12 +219,13 @@ def secure_api_response(response, path):
     response.headers['Cache-Control'] = 'no-store'
     response.headers['X-Content-Type-Options'] = 'nosniff'
     response.headers['Referrer-Policy'] = 'no-referrer'
-    if path.startswith('/api/') or path == '/admin.html':
+    if path.startswith('/api/') or path in ('/admin.html', '/admin-approve.html'):
         response.headers['X-Robots-Tag'] = 'noindex, nofollow, noarchive'
     response.headers['Content-Security-Policy'] = (
         "default-src 'self'; style-src 'self'; script-src 'self'; "
         "img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; "
         "base-uri 'none'; form-action 'self'")
+    response.headers['Strict-Transport-Security'] = 'max-age=31536000'
     return response
 
 
@@ -261,7 +265,7 @@ def secret(request, env, header):
         raise HTTPException(401, 'Chave inválida.')
 
 def admin(request: Request):
-    secret(request, 'STT_ADMIN_KEY', 'x-admin-key')
+    admin_auth.authorize(request, db, getenv)
 
 def worker(request: Request):
     """S7 has an independently rotatable key scoped to its own jobs."""
@@ -1020,4 +1024,5 @@ def result(jid: str, result: Result, request: Request):
         obs.event(c,jid,outcome,r['worker'],{'elapsed':result.elapsed})
     return {'ok':True,'receipt':receipt,'duplicate':False}
 
+admin_auth.install(app, db, getenv)
 app.mount('/', StaticFiles(directory=ROOT/'web',html=True),name='web')
