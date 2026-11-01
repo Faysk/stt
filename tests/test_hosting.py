@@ -53,7 +53,7 @@ def limited_api(tmp_path,monkeypatch):
 def test_limited_mode_rejects_youtube_before_body_and_unsupported_upload(limited_api):
     module,client=limited_api
     headers={'x-session-key':'a'*64}
-    assert client.get('/api/health').json()['formats']==['wav','mp3','ogg']
+    assert client.get('/api/health').json()['formats']==['wav','mp3','ogg','m4a']
     assert client.post('/api/jobs/youtube',headers=headers,content=b'invalid json').status_code==503
     assert client.post('/api/jobs/upload',headers=headers,files={'file':('video.mp4',b'video')}).status_code==400
     with module.db() as connection:
@@ -61,13 +61,14 @@ def test_limited_mode_rejects_youtube_before_body_and_unsupported_upload(limited
         assert connection.execute('SELECT count(*) FROM upload_slots').fetchone()[0]==0
 
 
-def test_long_ogg_is_rejected_before_queue_and_small_ogg_is_eligible(limited_api,monkeypatch):
+@pytest.mark.parametrize('extension',['ogg','m4a'])
+def test_long_ogg_is_rejected_before_queue_and_small_ogg_is_eligible(limited_api,monkeypatch,extension):
     module,client=limited_api
     monkeypatch.setattr(hosting,'duration_probe',lambda *a:301)
     headers={'x-session-key':'b'*64}
-    assert client.post('/api/jobs/upload',headers=headers,files={'file':('voice.ogg',b'ogg')}).status_code==413
+    assert client.post('/api/jobs/upload',headers=headers,files={'file':('voice.'+extension,b'fixture')}).status_code==413
     monkeypatch.setattr(hosting,'duration_probe',lambda *a:30)
-    response=client.post('/api/jobs/upload',headers=headers,files={'file':('voice.ogg',b'ogg')})
+    response=client.post('/api/jobs/upload',headers=headers,files={'file':('voice.'+extension,b'fixture')})
     assert response.status_code==201
     with module.db() as connection:
         job=connection.execute('SELECT * FROM jobs WHERE id=?',(response.json()['id'],)).fetchone()

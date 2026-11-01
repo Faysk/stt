@@ -9,7 +9,7 @@ import time
 from fastapi import HTTPException
 from server.config import getenv
 
-SMALL_FORMATS = ('wav', 'mp3', 'ogg')
+SMALL_FORMATS = ('wav', 'mp3', 'ogg', 'm4a')
 
 
 def capabilities(connection, now=None):
@@ -52,7 +52,7 @@ def storage_guard(blob, reserve=0):
 def duration_probe(path, media_type):
     try:
         result = subprocess.run(['ffprobe', '-v', 'error', '-protocol_whitelist', 'file,pipe',
-                                 '-f', media_type, '-show_entries', 'format=duration',
+                                 '-f', ('mov' if media_type=='m4a' else media_type), '-show_entries', 'format=duration',
                                  '-of', 'json', str(path)], capture_output=True, timeout=15,
                                 creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0)
         value = float(json.loads(result.stdout)['format']['duration'])

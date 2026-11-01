@@ -13,7 +13,7 @@ async function api(path,options={}){const r=await fetch(path,{...options,headers
 function tab(next){mode=next;for(const m of ['file','link']){$(m+'-tab').classList.toggle('active',m===next);$(m+'-tab').setAttribute('aria-selected',String(m===next));$(m+'-panel').hidden=m!==next}message('')}
 $('file-tab').onclick=()=>tab('file');$('link-tab').onclick=()=>tab('link');
 for(const m of ['file','link'])$(m+'-tab').onkeydown=e=>{if(['ArrowLeft','ArrowRight'].includes(e.key)){e.preventDefault();const next=m==='file'?'link':'file';tab(next);$(next+'-tab').focus()}};
-function limitedLabel(){return '8 MiB · 5 '+t('minutes')+' · WAV / MP3 / OGG'}
+function limitedLabel(){return '8 MiB · 5 '+t('minutes')+' · WAV / MP3 / OGG / M4A'}
 function select(file){if(!file)return;if(health?.formats&&!health.formats.some(ext=>file.name.toLowerCase().endsWith('.'+ext))){message(limitedLabel(),true);return}if(file.size>(health?.max_mb||90)*1024**2){message(health?.limited?limitedLabel():t('large'),true);return}selected=file;$('file-label').textContent=file.name;message(`${(file.size/1024**2).toFixed(1)} MB · ${t('ready')}`)}
 $('file').onchange=e=>select(e.target.files[0]);$('drop').onkeydown=e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();$('file').click()}};
 for(const event of ['dragenter','dragover'])$('drop').addEventListener(event,e=>{e.preventDefault();$('drop').classList.add('drag')});

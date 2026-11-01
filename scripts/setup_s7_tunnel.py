@@ -62,7 +62,7 @@ def main(apply=False, cutover=False, maintenance=False):
         request=urllib.request.Request('http://127.0.0.1:8786/api/health',headers={'x-edge-key':secret})
         with urllib.request.urlopen(request,timeout=15) as response:
             health=json.load(response)
-        if health.get('max_mb')!=8 or health.get('formats')!=['wav','mp3','ogg'] or health.get('max_seconds')!=300:
+        if health.get('max_mb')!=8 or health.get('formats')!=['wav','mp3','ogg','m4a'] or health.get('max_seconds')!=300:
             raise SystemExit('S7_API_HEALTH_GATE_FAILED')
         ingress[0]['service']='http://127.0.0.1:8786'
         api(endpoint+'/configurations','PUT',{'config':configuration})

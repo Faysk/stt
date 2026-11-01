@@ -310,7 +310,7 @@ def preflight(request: Request):
         c.execute('BEGIN IMMEDIATE')
         capacity = hosting.capabilities(c)
         if not is_upload and not capacity['youtube']:
-            raise HTTPException(503, 'Modo limitado: envie áudio WAV, MP3 ou OGG de até 5 minutos.')
+            raise HTTPException(503, 'Modo limitado: envie áudio WAV, MP3, OGG ou M4A de até 5 minutos.')
         length = request.headers.get('content-length', '')
         if length.isdecimal() and int(length) > capacity['max_mb']*1024**2+1024**2:
             raise HTTPException(413, 'Arquivo excede o limite disponível no momento.')
@@ -462,7 +462,7 @@ async def upload(request: Request, file: UploadFile = File(...), own=Depends(own
     with db() as c:
         capacity = hosting.capabilities(c)
         if capacity['formats'] and suffix.lstrip('.') not in capacity['formats']:
-            raise HTTPException(400, 'Modo limitado: envie WAV, MP3 ou OGG de até 5 minutos e 8 MiB.')
+            raise HTTPException(400, 'Modo limitado: envie WAV, MP3, OGG ou M4A de até 5 minutos e 8 MiB.')
         jid = new_job(c, own, Path(file.filename).name[:180], 'upload',request)
     folder = BLOB / jid
     created = False
@@ -640,7 +640,7 @@ def dashboard():
           host=host_snapshot,telemetry_error=telemetry_error,now=time.time(),versions=obs.package_versions(),
           models=MODELS,catalog=installed_models(getenv('STT_MODELS',str(ROOT/'models'))),
           preloads=[dict(r) for r in c.execute('SELECT * FROM model_preloads ORDER BY updated DESC LIMIT 100')],
-          ssh_targets=ssh_targets(),s7_formats=['wav','mp3','ogg'],
+          ssh_targets=ssh_targets(),s7_formats=['wav','mp3','ogg','m4a'],
           autonomous_host=(getenv('STT_LIGHT_HOST','0')=='1'),
           s7_side_worker=(getenv('STT_S7_ENABLED','0')=='1' and getenv('STT_S7_SIDE_WORKER','0')=='1'))
 
@@ -850,7 +850,7 @@ class Claim(BaseModel):
 def s7_eligible(item):
     return (item['source']=='upload' and 0 < (item['input_bytes'] or 0) <= 8*1024**2
             and ('duration' not in item.keys() or item['duration'] is None or item['duration']<=300)
-            and Path(item['title'] or '').suffix.lower() in ('.wav','.mp3','.ogg'))
+            and Path(item['title'] or '').suffix.lower() in ('.wav','.mp3','.ogg','.m4a'))
 
 @app.post('/api/worker/claim', dependencies=[Depends(worker)])
 def claim(w: Claim, request: Request):

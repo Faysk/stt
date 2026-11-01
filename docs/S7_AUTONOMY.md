@@ -15,7 +15,7 @@ A instalação usou pacotes oficiais Termux e dependências PyPI fixadas no inst
 
 ## Capacidade pública
 
-Sem um executor completo selecionado e online, a API admite WAV, MP3 e OGG de até **8 MiB e 5 minutos**. Novos envios de YouTube ficam desabilitados. Limites são aplicados na admissão, no corpo HTTP inclusive chunked, na validação de duração e no cliente nativo.
+Sem um executor completo selecionado e online, a API admite WAV, MP3, OGG e M4A de até **8 MiB e 5 minutos**. Novos envios de YouTube ficam desabilitados. Limites são aplicados na admissão, no corpo HTTP inclusive chunked, na validação de duração e no cliente nativo.
 
 Quando um executor completo selecionado estiver online, a API permite os formatos gerais, até 90 MiB e duas horas. O S7 continua limitado aos próprios formatos e duração; jobs longos conhecidos não são atribuídos a ele. A seleção de executor/modelo permanece manual.
 
@@ -47,6 +47,7 @@ Resultados na API publicada:
 | --- | --- | --- | --- |
 | OGG que aguardava na fila, `a81a3c50` | 154,01 s | 112,44 s | concluído no S7, uma tentativa |
 | Upload público de referência JFK, `1797da92` | 11 s | 14,72 s | concluído no S7, uma tentativa |
+| Referência AAC em M4A, `29f82eaa` | 11 s | 10,60 s | concluído no S7; TXT público conferido |
 
 TXT, Markdown, SRT e JSON do áudio de referência foram baixados pela sessão proprietária no domínio público; texto de referência e timestamps foram conferidos. A sessão administrativa existente continuou funcionando após a cópia. Fila e outbox ficaram vazios; API local, histórico e conector próprio do S7 foram conferidos. Com fila sem trabalhos ativos, o worker foi encerrado por sinal e reiniciado automaticamente pelo runit, preservando a configuração da fila. O supervisor Windows foi verificado com uma única instância e o script de início respeitou o modo de worker remoto. A origem sem segredo continua respondendo 403.
 

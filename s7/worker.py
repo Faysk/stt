@@ -248,10 +248,10 @@ def run_bounded(argv,deadline,stage,alive,heartbeat,storage_guard=None):
 def decode_audio(path,output,deadline,alive,input_type,storage_guard=None):
     # Force a strict demuxer from the server-signed job to prevent a disguised
     # playlist/manifest asking FFmpeg to fetch network or private local files.
-    if input_type not in ("wav","mp3","ogg"):
+    if input_type not in ("wav","mp3","ogg","m4a"):
         raise WorkerError("Unsupported media type on S7")
     command=["ffmpeg","-nostdin","-hide_banner","-loglevel","error","-y",
-             "-protocol_whitelist","file,pipe","-f",input_type,"-i",str(path),"-vn","-t",str(MAX_SECONDS+2),
+             "-protocol_whitelist","file,pipe","-f",("mov" if input_type=="m4a" else input_type),"-i",str(path),"-vn","-t",str(MAX_SECONDS+2),
              "-ac","1","-ar","16000","-c:a","pcm_s16le",str(output)]
     run_bounded(command,deadline,"decode",alive,None,storage_guard)
     import wave
@@ -285,7 +285,7 @@ def run_job(cfg,job):
     if (not JOB_ID.fullmatch(str(job.get("id",""))) or job.get("model")!="tiny"
             or job.get("engine")!="whisper" or job.get("device")!="cpu"
             or job.get("compute")!="float32" or job.get("source")!="upload"
-            or job.get("input_type") not in ("wav","mp3","ogg")):
+            or job.get("input_type") not in ("wav","mp3","ogg","m4a")):
         raise WorkerError("Unexpected job configuration")
     deadline=min(float(job["expires"])-10,time.time()+600)
     if deadline <= time.time()+10: raise WorkerError("Job lease too short")
