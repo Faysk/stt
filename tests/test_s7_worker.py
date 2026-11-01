@@ -13,6 +13,8 @@ def api(tmp_path, monkeypatch):
     monkeypatch.setenv("STT_WORKER_KEY","master-worker-test")
     monkeypatch.setenv("STT_S7_WORKER_KEY","s7-dedicated-test")
     monkeypatch.setenv("STT_REQUIRE_EDGE","0")
+    monkeypatch.setenv("STT_S7_ENABLED","0")
+    monkeypatch.setenv("STT_S7_SIDE_WORKER","0")
     import server.app as module
     return importlib.reload(module)
 
@@ -171,3 +173,39 @@ def test_s7_can_run_as_secondary_alongside_primary(tmp_path,monkeypatch):
         admin=c.get("/api/admin",headers=ADMIN).json()
         assert admin["s7_side_worker"] is True
         assert {x["worker"] for x in admin["jobs"]}=={"s7-edge","notebook"}
+
+
+def test_s7_storage_floor_and_workspace_budget(tmp_path,monkeypatch):
+    from s7 import worker as w
+    from types import SimpleNamespace
+    cfg={'work':tmp_path}
+    monkeypatch.setattr(w.shutil,'disk_usage',lambda _:SimpleNamespace(free=w.MIN_INTERNAL_FREE+w.JOB_RESERVE*2))
+    w.ensure_storage(cfg,reserve=w.JOB_RESERVE)
+    monkeypatch.setattr(w.shutil,'disk_usage',lambda _:SimpleNamespace(free=w.MIN_INTERNAL_FREE-1))
+    with pytest.raises(w.WorkerError):w.ensure_storage(cfg)
+    monkeypatch.setattr(w.shutil,'disk_usage',lambda _:SimpleNamespace(free=w.MIN_INTERNAL_FREE+w.JOB_RESERVE*2))
+    monkeypatch.setattr(w,'WORKSPACE_BUDGET',128)
+    (tmp_path/'own-cache').write_bytes(b'x'*120)
+    with pytest.raises(w.WorkerError):w.ensure_storage(cfg,reserve=16)
+
+
+def test_s7_stops_child_when_storage_floor_is_crossed(monkeypatch):
+    import threading,time
+    from s7 import worker as w
+    from types import SimpleNamespace
+    child=SimpleNamespace(poll=lambda:None)
+    killed=[]
+    monkeypatch.setattr(w.subprocess,'Popen',lambda *a,**kw:child)
+    monkeypatch.setattr(w,'kill',lambda p:killed.append(p))
+    def crossed():raise w.WorkerError('storage reserve')
+    with pytest.raises(w.WorkerError):
+        w.run_bounded(['fixture'],time.time()+10,'infer',threading.Event(),None,crossed)
+    assert killed==[child]
+
+
+def test_s7_outbox_rejects_oversized_result_before_writing(tmp_path):
+    from s7 import worker as w
+    cfg={'work':tmp_path}
+    job={'id':'fixture','lease':'test-lease','expires':99999999999}
+    with pytest.raises(w.WorkerError):w.spool(cfg,job,{'text':'x'*(1024**2)})
+    assert not list(tmp_path.iterdir())
