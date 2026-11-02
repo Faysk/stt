@@ -75,7 +75,8 @@ def test_permanent_http_422_preserves_payload_but_unblocks_claims(tmp_path, monk
     assert data['dead_letter_status'] == 422
     assert data['payload']['text'] == 'valuable transcript'
     assert w._drain_outbox() is False
-    assert len(calls) == 1
+    assert len(calls) == 2  # Result rejected; separate minimal failure notice attempted.
+    assert data['rejection_notify_status'] == 422
 
 
 def test_transient_503_retries_and_ack_removes_spool(tmp_path, monkeypatch):

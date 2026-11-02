@@ -11,6 +11,7 @@ import psutil
 from server.observability import package_versions
 from server.catalog import installed_models
 from server.metrics import make_metrics
+from server.segment_timing import reconcile_whisper_segments
 from server.config import getenv
 
 MAX_MEDIA_BYTES = 90 * 1024**2
@@ -106,7 +107,7 @@ def run(config):
         with av.open(str(media)) as container:
             duration=(container.duration or 0)/av.time_base
             if duration>MAX_AUDIO_SECONDS: raise ValueError('Duração máxima: 2 horas.')
-            bounded_audio_duration(container)
+            decoded_duration = bounded_audio_duration(container)
         finish_stage('media_probe_s')
         from faster_whisper import WhisperModel
         progress('loading')
@@ -124,7 +125,11 @@ def run(config):
             progress('transcribing',segment.end/max(info.duration,1)*100)
         finish_stage('asr_s')
         progress('finishing',99)
-        result=dict(segments=output,language=info.language,duration=info.duration,input_bytes=media.stat().st_size,model_revision=revisions.get(job['model']),title=media_title)
+        # The model can output segment ends beyond the physical audio tail.
+        # Do not falsify the duration or let the API reject the entire transcript.
+        timing = reconcile_whisper_segments(output, decoded_duration)
+        result=dict(**timing,language=info.language,duration=decoded_duration,
+                    input_bytes=media.stat().st_size,model_revision=revisions.get(job['model']),title=media_title)
     except Exception as e:
         print(f'Inference error: {type(e).__name__}',file=sys.stderr,flush=True)
         result={'error':'Não foi possível transcrever. Verifique o arquivo, o acesso ao vídeo ou a configuração do executor.'}
