@@ -25,7 +25,10 @@ gpu = [
   # faster-whisper 1.2 uses av.open(metadata_errors=...), removed by PyAV 17+.
 
 [dependency-groups]
-dev = ["pytest>=8"]
+dev = [
+    "pytest>=8",
+    "rapidfuzz>=3.14.6",
+]
 
 [tool.pytest.ini_options]
 pythonpath = ["."]
