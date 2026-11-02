@@ -247,3 +247,34 @@ def test_failed_workspace_creation_does_not_publish_unprocessable_job(
             with module.db() as conn:
                 assert conn.execute('SELECT COUNT(*) FROM jobs').fetchone()[0]==0
             assert list(module.BLOB.glob('[0-9a-f]'*32))==[]
+
+
+def test_input_transport_retry_discards_partial_bytes(tmp_path,monkeypatch):
+    w=worker(tmp_path,monkeypatch)
+    calls=[]
+    class Broken(httpx.SyncByteStream):
+        def __iter__(self):
+            yield b'partial'
+            raise httpx.RemoteProtocolError('truncated')
+    def handler(request):
+        calls.append(request)
+        return httpx.Response(200,stream=Broken()) if len(calls)==1 else httpx.Response(200,content=b'complete')
+    monkeypatch.setattr(w,'client',httpx.Client(base_url="https://invalid.example",transport=httpx.MockTransport(handler)))
+    monkeypatch.setattr(w.time,'sleep',lambda _:None)
+    target=tmp_path/'input.media'
+    w._download_input({'id':'sample','lease':'dummy'},target,time.time()+60,lambda:None)
+    assert target.read_bytes()==b'complete'
+    assert len(calls)==2
+
+
+def test_input_transport_retries_are_bounded(tmp_path,monkeypatch):
+    w=worker(tmp_path,monkeypatch)
+    calls=[]
+    def handler(request):
+        calls.append(request)
+        raise httpx.ReadTimeout('timeout')
+    monkeypatch.setattr(w,'client',httpx.Client(base_url="https://invalid.example",transport=httpx.MockTransport(handler)))
+    monkeypatch.setattr(w.time,'sleep',lambda _:None)
+    with pytest.raises(httpx.ReadTimeout):
+        w._download_input({'id':'sample','lease':'dummy'},tmp_path/'input.media',time.time()+60,lambda:None)
+    assert len(calls)==3

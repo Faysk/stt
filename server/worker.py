@@ -209,6 +209,32 @@ def _engine_command(job,config):
         return [str(Path(runtime).resolve()),'-m','server.qwen_engine',str(config)]
     raise RuntimeError('ENGINE_UNSUPPORTED')
 
+def _download_input(job,path,deadline,check_budget):
+    # Restart a truncated response from byte zero; never feed partial media to ASR.
+    for attempt in range(3):
+        check_budget()
+        try:
+            timeout=httpx.Timeout(max(1,min(30,deadline-time.time())))
+            with client.stream('GET',f"/api/worker/{job['id']}/input",
+                               headers={'x-lease':job['lease']},timeout=timeout) as response:
+                response.raise_for_status()
+                transferred=0
+                with path.open('wb') as stream:
+                    for chunk in response.iter_bytes():
+                        check_budget()
+                        transferred+=len(chunk)
+                        if transferred>MAX_MEDIA_BYTES:
+                            raise RuntimeError('Input exceeded media size budget')
+                        stream.write(chunk)
+                        check_budget()
+            return
+        except httpx.TransportError:
+            path.unlink(missing_ok=True)
+            check_budget()
+            if attempt==2:raise
+            time.sleep(min(2**attempt,max(0,deadline-time.time())))
+
+
 def execute(job):
     finished = threading.Event()
     lost = threading.Event()
@@ -249,20 +275,7 @@ def execute(job):
             config = folder/'job.json'
             config.write_text(json.dumps(job),encoding='utf-8')
             if job['source']=='upload':
-                check_budget()
-                timeout = httpx.Timeout(max(1,min(30,deadline-time.time())))
-                with client.stream('GET',f"/api/worker/{job['id']}/input",
-                                   headers={'x-lease':job['lease']},timeout=timeout) as r:
-                    r.raise_for_status()
-                    with (folder/'input.media').open('wb') as stream:
-                        transferred = 0
-                        for chunk in r.iter_bytes():
-                            check_budget()
-                            transferred += len(chunk)
-                            if transferred > MAX_MEDIA_BYTES:
-                                raise RuntimeError('Input exceeded media size budget')
-                            stream.write(chunk)
-                            check_budget()
+                _download_input(job,folder/'input.media',deadline,check_budget)
             check_budget()  # Nothing may spawn after a slow or expired download.
             flags = {'creationflags':subprocess.CREATE_NEW_PROCESS_GROUP} if os.name=='nt' else {'start_new_session':True}
             proc = subprocess.Popen(_engine_command(job,config),cwd=ROOT,**flags)
