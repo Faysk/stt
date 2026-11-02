@@ -96,6 +96,11 @@ A atualização ocorreu com fila vazia e temporariamente pausada. A configuraç�
 original foi restaurada: principal selecionado, Turbo/CUDA/float16, fila
 liberada; ambos os agentes prontos. Não houve mudança de DNS nem de conector.
 
+Entrega de código: `707d27a`. Frontend publicado no Worker STT, versão
+`5448f31a-fb0f-426e-be89-91a7b66c08f6`. Verificação final: health público 200,
+origem sem segredo 403, fila vazia e capacidades completas 90 MiB/7200 s.
+Backend e clientes foram conferidos separadamente do deploy de assets.
+
 ## Ordem de trabalho restante
 
 1. Reservas concorrentes, I/O do coordenador, backup e restauração (#94).
