@@ -278,3 +278,20 @@ def test_input_transport_retries_are_bounded(tmp_path,monkeypatch):
     with pytest.raises(httpx.ReadTimeout):
         w._download_input({'id':'sample','lease':'dummy'},tmp_path/'input.media',time.time()+60,lambda:None)
     assert len(calls)==3
+
+
+def test_input_ranges_resume_without_repeating_completed_chunks(tmp_path,monkeypatch):
+    w=worker(tmp_path,monkeypatch)
+    ranges=[]
+    def handler(request):
+        value=request.headers['range'];ranges.append(value)
+        if value.startswith('bytes=0-'):
+            return httpx.Response(206,headers={'content-range':'bytes 0-2/6'},content=b'abc')
+        if len(ranges)==2:raise httpx.ReadTimeout('temporary')
+        return httpx.Response(206,headers={'content-range':'bytes 3-5/6'},content=b'def')
+    monkeypatch.setattr(w,'client',httpx.Client(base_url="https://invalid.example",transport=httpx.MockTransport(handler)))
+    monkeypatch.setattr(w.time,'sleep',lambda _:None)
+    target=tmp_path/'input.media'
+    w._download_input({'id':'sample','lease':'dummy'},target,time.time()+60,lambda:None)
+    assert target.read_bytes()==b'abcdef'
+    assert len(ranges)==3 and ranges[1]==ranges[2]

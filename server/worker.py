@@ -210,29 +210,51 @@ def _engine_command(job,config):
     raise RuntimeError('ENGINE_UNSUPPORTED')
 
 def _download_input(job,path,deadline,check_budget):
-    # Restart a truncated response from byte zero; never feed partial media to ASR.
-    for attempt in range(3):
-        check_budget()
-        try:
-            timeout=httpx.Timeout(max(1,min(30,deadline-time.time())))
-            with client.stream('GET',f"/api/worker/{job['id']}/input",
-                               headers={'x-lease':job['lease']},timeout=timeout) as response:
-                response.raise_for_status()
-                transferred=0
-                with path.open('wb') as stream:
-                    for chunk in response.iter_bytes():
-                        check_budget()
-                        transferred+=len(chunk)
-                        if transferred>MAX_MEDIA_BYTES:
-                            raise RuntimeError('Input exceeded media size budget')
-                        stream.write(chunk)
-                        check_budget()
-            return
-        except httpx.TransportError:
-            path.unlink(missing_ok=True)
-            check_budget()
-            if attempt==2:raise
-            time.sleep(min(2**attempt,max(0,deadline-time.time())))
+    # Short range requests avoid long tunnel transfers; retry only the current
+    # chunk and never pass a truncated or mismatched response to inference.
+    offset=0
+    with path.open('wb') as stream:
+        while True:
+            for attempt in range(3):
+                check_budget()
+                stream.seek(offset)
+                stream.truncate()
+                try:
+                    timeout=httpx.Timeout(max(1,min(30,deadline-time.time())))
+                    headers={'x-lease':job['lease'],'Range':f'bytes={offset}-{offset+1024**2-1}',
+                             'Accept-Encoding':'identity'}
+                    with client.stream('GET',f"/api/worker/{job['id']}/input",
+                                       headers=headers,timeout=timeout) as response:
+                        response.raise_for_status()
+                        total=None
+                        expected=None
+                        if response.status_code==206:
+                            unit,value=response.headers.get('content-range','').split(' ',1)
+                            span,size=value.split('/')
+                            first,last=map(int,span.split('-'))
+                            total=int(size)
+                            if unit!='bytes' or first!=offset or not offset<=last<total<=MAX_MEDIA_BYTES:
+                                raise RuntimeError('Invalid input range response')
+                            expected=last-first+1
+                        elif response.status_code!=200 or offset:
+                            raise RuntimeError('Input range request was not honored')
+                        received=0
+                        for chunk in response.iter_bytes():
+                            check_budget()
+                            received+=len(chunk)
+                            if offset+received>MAX_MEDIA_BYTES or expected is not None and received>expected:
+                                raise RuntimeError('Input exceeded media size budget')
+                            stream.write(chunk)
+                        if expected is not None and received!=expected:
+                            raise httpx.RemoteProtocolError('Truncated input range')
+                    offset+=received
+                    break
+                except httpx.TransportError:
+                    check_budget()
+                    if attempt==2:raise
+                    time.sleep(min(2**attempt,max(0,deadline-time.time())))
+            if total is None or offset==total:
+                return
 
 
 def execute(job):
