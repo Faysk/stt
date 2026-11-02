@@ -15,10 +15,12 @@ SMALL_FORMATS = ('wav', 'mp3', 'ogg', 'm4a')
 def capabilities(connection, now=None):
     now = time.time() if now is None else now
     settings = json.loads(connection.execute('SELECT value FROM settings WHERE id=1').fetchone()[0])
-    primary = connection.execute('SELECT seen FROM workers WHERE id=?', (settings['worker'],)).fetchone()
+    primary = connection.execute('SELECT seen,info FROM workers WHERE id=?', (settings['worker'],)).fetchone()
     control=connection.execute('SELECT enabled FROM worker_controls WHERE id=?',(settings['worker'],)).fetchone()
     restricted = getenv('STT_LIGHT_HOST', '0') == '1' and (
-        settings['worker'] == 's7-edge' or primary is None or now-primary['seen'] >= 90 or control is not None and not control['enabled'])
+        settings['worker'] == 's7-edge' or primary is None or now-primary['seen'] >= 90
+        or json.loads(primary['info']).get('ready') is False
+        or control is not None and not control['enabled'])
     return dict(limited=restricted, max_mb=8 if restricted else 90,
                 max_seconds=300 if restricted else 7200,
                 formats=list(SMALL_FORMATS) if restricted else None,

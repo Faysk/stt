@@ -1,5 +1,6 @@
 """Outbound-only executor. Run on a trusted PC with the shared worker secret."""
 import hashlib
+import hmac
 import json
 import os
 import platform
@@ -16,6 +17,8 @@ import httpx
 from dotenv import load_dotenv
 from server.observability import package_versions
 from server.config import getenv, required
+from server import workspace
+from server.result_contract import result_receipt
 
 load_dotenv()
 BASE = getenv('STT_URL','http://127.0.0.1:8765').rstrip('/')
@@ -61,7 +64,8 @@ def _atomic_json(path, value):
 def _save_outbox(job, result):
     path = _outbox_path(job)
     _atomic_json(path,dict(id=job['id'],lease=job['lease'],expires=job['expires'],
-                           payload=dict(result,lease=job['lease']),attempts=0,retry_at=0,stale=False))
+                           payload=dict(result,lease=job['lease']),attempts=0,retry_at=0,stale=False,
+                           delivery_heartbeat=time.time()))
     return path
 
 def _deliver(path, now=None):
@@ -75,10 +79,22 @@ def _deliver(path, now=None):
         return 'stale'
     if data.get('dead_letter'):
         return 'quarantined'
+    if now-data.get('delivery_heartbeat',path.stat().st_mtime)>=30:
+        try:
+            pulse=client.post(f"/api/worker/{data['id']}/heartbeat",
+                              json={'lease':data['lease'],'stage':'finishing','progress':99},timeout=10)
+            if pulse.status_code in (401,403):return 'auth_blocked'
+            # A committed result with a lost ACK also returns 409 to heartbeat.
+            # Let the idempotent result endpoint distinguish it from a stale lease.
+            if pulse.status_code!=409:pulse.raise_for_status()
+            data['delivery_heartbeat']=now
+            _atomic_json(path,data)
+        except httpx.HTTPError:
+            return 'pending'
     if data['retry_at']>now:
         return 'pending'
     try:
-        remaining = max(1,min(120,data['expires']-now))
+        remaining = max(1,min(30,data['expires']-now))
         response = client.post(f"/api/worker/{data['id']}/result",
                                json=data['payload'],timeout=remaining)
         if response.status_code==409:
@@ -123,6 +139,11 @@ def _deliver(path, now=None):
             data['dead_letter_at']=now
             _atomic_json(path,data)
             print(f"Delivery {data['id']}: quarantined invalid receipt",flush=True)
+            return 'quarantined'
+        if not hmac.compare_digest(receipt, result_receipt(data['payload'])):
+            data.update(dead_letter=True,dead_letter_status=response.status_code,
+                        dead_letter_reason='receipt_mismatch',dead_letter_at=now)
+            _atomic_json(path,data)
             return 'quarantined'
         path.unlink(missing_ok=True)
         return 'acked'
@@ -209,48 +230,72 @@ def _engine_command(job,config):
         return [str(Path(runtime).resolve()),'-m','server.qwen_engine',str(config)]
     raise RuntimeError('ENGINE_UNSUPPORTED')
 
-def _download_input(job,path,deadline,check_budget):
-    # Short range requests avoid long tunnel transfers; retry only the current
-    # chunk and never pass a truncated or mismatched response to inference.
+def _download_input(job,path,deadline,check_budget,on_progress=None):
+    # Bound transfer separately from ASR. Pin size/ETag across contiguous ranges.
+    deadline=min(deadline,time.time()+600)
     offset=0
+    pinned_total=None
+    pinned_etag=None
+    def check():
+        check_budget()
+        if time.time()>=deadline:raise RuntimeError('Input transfer deadline exceeded')
     with path.open('wb') as stream:
         while True:
             for attempt in range(3):
-                check_budget()
+                check()
                 stream.seek(offset)
                 stream.truncate()
                 try:
-                    timeout=httpx.Timeout(max(1,min(30,deadline-time.time())))
+                    timeout=httpx.Timeout(max(0.1,min(30,deadline-time.time())))
                     headers={'x-lease':job['lease'],'Range':f'bytes={offset}-{offset+1024**2-1}',
                              'Accept-Encoding':'identity'}
+                    if pinned_etag:headers['If-Range']=pinned_etag
                     with client.stream('GET',f"/api/worker/{job['id']}/input",
                                        headers=headers,timeout=timeout) as response:
                         response.raise_for_status()
                         total=None
                         expected=None
+                        etag=response.headers.get('etag')
+                        if pinned_etag is not None and etag!=pinned_etag:
+                            raise RuntimeError('Input representation changed')
                         if response.status_code==206:
                             unit,value=response.headers.get('content-range','').split(' ',1)
                             span,size=value.split('/')
                             first,last=map(int,span.split('-'))
                             total=int(size)
-                            if unit!='bytes' or first!=offset or not offset<=last<total<=MAX_MEDIA_BYTES:
+                            if (unit!='bytes' or first!=offset or not offset<=last<total<=MAX_MEDIA_BYTES
+                                    or last-offset>=1024**2 or pinned_total is not None and total!=pinned_total):
                                 raise RuntimeError('Invalid input range response')
                             expected=last-first+1
                         elif response.status_code!=200 or offset:
                             raise RuntimeError('Input range request was not honored')
+                        else:
+                            length=response.headers.get('content-length')
+                            if length is not None:
+                                if not length.isdecimal() or not 0<int(length)<=MAX_MEDIA_BYTES:
+                                    raise RuntimeError('Invalid input content length')
+                                expected=int(length)
+                        if response.headers.get('content-encoding','identity')!='identity':
+                            raise RuntimeError('Encoded input response is not supported')
+                        pinned_total=total
+                        if pinned_etag is None:pinned_etag=etag
                         received=0
                         for chunk in response.iter_bytes():
-                            check_budget()
+                            check()
                             received+=len(chunk)
                             if offset+received>MAX_MEDIA_BYTES or expected is not None and received>expected:
                                 raise RuntimeError('Input exceeded media size budget')
                             stream.write(chunk)
-                        if expected is not None and received!=expected:
-                            raise httpx.RemoteProtocolError('Truncated input range')
+                            if on_progress:on_progress(offset+received,total or expected)
+                        if not received or expected is not None and received!=expected:
+                            raise httpx.RemoteProtocolError('Truncated input response')
+                    check()
                     offset+=received
                     break
-                except httpx.TransportError:
-                    check_budget()
+                except (httpx.TransportError,httpx.HTTPStatusError) as error:
+                    if isinstance(error,httpx.HTTPStatusError) and error.response.status_code not in (408,425,429,500,502,503,504):
+                        raise
+                    check()
                     if attempt==2:raise
                     time.sleep(min(2**attempt,max(0,deadline-time.time())))
             if total is None or offset==total:
@@ -275,7 +320,7 @@ def execute(job):
                     except (ValueError,OSError): pass
                 r = client.post(f"/api/worker/{job['id']}/heartbeat",
                                 json={'lease':job['lease'],**progress})
-                if r.status_code==409: lost.set()
+                if r.status_code in (401,403,409): lost.set()
             except httpx.HTTPError:
                 pass
     thread = threading.Thread(target=heartbeat,daemon=True)
@@ -285,19 +330,20 @@ def execute(job):
         # Never inherit tempfile.tempdir: the API changes it for multipart
         # spooling, and an earlier API/test lifecycle can leave it stale.
         # Worker inference needs an independent, persistent parent directory.
-        temp_root = Path(getenv('STT_TMP') or str(ROOT / 'worker-tmp'))
-        if temp_root.is_symlink():
-            raise OSError('Untrusted worker temporary directory')
-        temp_root.mkdir(parents=True, exist_ok=True, mode=0o700)
-        if not temp_root.is_dir():
-            raise OSError('Worker temporary path is not a directory')
-        with tempfile.TemporaryDirectory(prefix='stt-',dir=str(temp_root)) as temp:
+        temp_root = getenv('STT_TMP') or str(ROOT / 'worker-tmp')
+        with workspace.directory(temp_root) as temp:
             folder = Path(temp)
             progress_file=folder/'progress.json'
             config = folder/'job.json'
             config.write_text(json.dumps(job),encoding='utf-8')
             if job['source']=='upload':
-                _download_input(job,folder/'input.media',deadline,check_budget)
+                def transfer_progress(received,total):
+                    value={'stage':'downloading','progress':min(99,received/max(total or MAX_MEDIA_BYTES,1)*100)}
+                    temporary=folder/'transfer.tmp'
+                    temporary.write_text(json.dumps(value),encoding='utf-8')
+                    temporary.replace(progress_file)
+                transfer_progress(0,None)
+                _download_input(job,folder/'input.media',deadline,check_budget,transfer_progress)
             check_budget()  # Nothing may spawn after a slow or expired download.
             flags = {'creationflags':subprocess.CREATE_NEW_PROCESS_GROUP} if os.name=='nt' else {'start_new_session':True}
             proc = subprocess.Popen(_engine_command(job,config),cwd=ROOT,**flags)
@@ -406,9 +452,6 @@ def main():
     try:
         while True:
             try:
-                if _drain_outbox():
-                    time.sleep(5)
-                    continue
                 control=client.post('/api/worker/control',json={'id':IDENTITY})
                 control.raise_for_status()
                 enabled=control.json().get('enabled') is True
@@ -417,9 +460,21 @@ def main():
                     preload_proc=None
                     if preload_path:preload_path.unlink(missing_ok=True);preload_path=None
                     client.post('/api/worker/control',json={'id':IDENTITY,'applied_enabled':False}).raise_for_status()
+                    _drain_outbox()  # Keep durable results; no new model/claim.
                     time.sleep(5)
                     continue
-                client.post('/api/worker/control',json={'id':IDENTITY,'applied_enabled':True}).raise_for_status()
+                try:
+                    workspace.preflight(getenv('STT_TMP') or str(ROOT/'worker-tmp'),OUTBOX)
+                except OSError:
+                    client.post('/api/worker/control',json={'id':IDENTITY,'applied_enabled':True,
+                        'ready':False,'reason':'WORKSPACE_UNAVAILABLE'}).raise_for_status()
+                    time.sleep(10)
+                    continue
+                client.post('/api/worker/control',json={'id':IDENTITY,'applied_enabled':True,
+                    'ready':True,'reason':None}).raise_for_status()
+                if _drain_outbox():
+                    time.sleep(5)
+                    continue
                 r=client.post('/api/worker/claim',json={'id':IDENTITY,'info':worker_capabilities()})
                 r.raise_for_status()
                 job=r.json()['job']

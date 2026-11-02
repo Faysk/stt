@@ -20,7 +20,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, model_validator
 from server.catalog import MODEL_CATALOG, installed_models
 from server import observability as obs
-from server.metrics import validate as validate_metrics
+from server.result_contract import Result, Segment, result_receipt
 from server.config import getenv
 from server.ssh_targets import ssh_targets
 from server import admin_auth
@@ -32,6 +32,7 @@ DATA = Path(getenv('STT_DATA', str(ROOT))).resolve()
 BLOB = DATA / 'blob'
 DB = DATA / 'db' / 'stt.sqlite3'
 MAX_BYTES = 90 * 1024 * 1024
+MAX_RESULT_BYTES = 2 * 1024**2
 TTL = 86400
 OPERATIONAL_RETENTION = 30 * TTL
 AGGREGATE_RETENTION = 5 * 365 * TTL
@@ -146,11 +147,14 @@ def maintenance():
                             AND coalesce(purge_retry_at,0)<=?""", (now,now)).fetchall()
         for row in rows:
             _purge_job(c,row['id'],now)
-        for row in c.execute("SELECT id,attempts FROM jobs WHERE status='running' AND heartbeat<? AND expires>?",(now-180,now)).fetchall():
+        for row in c.execute("""SELECT id,attempts,started FROM jobs WHERE status='running'
+                AND (coalesce(heartbeat,started,created)<? OR coalesce(started,created)<?)
+                AND expires>?""",(now-180,now-7200,now)).fetchall():
             failed=row['attempts']>=3
             c.execute("UPDATE jobs SET status=?,outcome=?,stage=?,error=?,lease=NULL,progress=0 WHERE id=?",('failed' if failed else 'queued','failed' if failed else None,'failed' if failed else 'queued','Executor desconectado; limite de tentativas atingido.' if failed else None,row['id']))
             c.execute('UPDATE jobs SET finished=? WHERE id=?',(now if failed else None,row['id']))
-            obs.event(c,row['id'],'failed' if failed else 'requeued',data={'reason':'heartbeat_timeout'})
+            reason='execution_deadline' if row['started'] and row['started']<now-7200 else 'heartbeat_timeout'
+            obs.event(c,row['id'],'failed' if failed else 'requeued',data={'reason':reason})
         stale = c.execute("SELECT id FROM jobs WHERE status='uploading' AND created<?",(now-900,)).fetchall()
         for row in stale:
             # Stale media is also covered by the ordinary expiry/purge pass.
@@ -241,8 +245,8 @@ async def guard(request: Request, call_next):
         return secure_api_response(JSONResponse({'detail':detail}, status_code=status),
                                    request.url.path)
     length = request.headers.get('content-length')
-    if length and (not length.isdecimal() or int(length)>MAX_BYTES+1024*1024):
-        return denied('Limite de 90 MB por arquivo.', 413)
+    if length and (not length.isdecimal() or int(length)>body_limit(request.url.path)):
+        return denied('Corpo da requisição excede o limite.', 413)
     if getenv('STT_REQUIRE_EDGE') == '1':
         key = getenv('STT_EDGE_KEY', '')
         if not key or not hmac.compare_digest(request.headers.get('x-edge-key', ''), key):
@@ -377,6 +381,12 @@ def new_job(c, own, title, source, request=None):
     obs.event(c,jid,'submitted',actor='session:'+client_tag(own),data={'source':'upload' if source=='upload' else 'youtube'})
     return jid
 
+def body_limit(path):
+    if path=='/api/jobs/upload':return MAX_BYTES+1024**2
+    if path.startswith('/api/worker/') and path.endswith('/result'):return MAX_RESULT_BYTES
+    return 32768
+
+
 class BodyLimit:
     def __init__(self, app):
         self.app = app
@@ -388,20 +398,36 @@ class BodyLimit:
         exceeded = False
         responded = False
         started = False
-        maximum = MAX_BYTES
+        depth = 0
+        quoted = False
+        escaped = False
+        maximum = body_limit(scope.get('path',''))
         if getenv('STT_LIGHT_HOST','0')=='1' and scope.get('path')=='/api/jobs/upload':
             with db() as connection:
-                maximum = hosting.capabilities(connection)['max_mb']*1024**2
+                maximum = hosting.capabilities(connection)['max_mb']*1024**2+1024**2
 
         async def limited():
-            nonlocal size, exceeded
+            nonlocal size, exceeded, depth, quoted, escaped
             if exceeded:
                 return {'type':'http.request', 'body':b'', 'more_body':False}
             message = await receive()
             if message['type'] != 'http.request':
                 return message
             size += len(message.get('body', b''))
-            if size > maximum + 1024*1024:
+            if scope.get('path','')!='/api/jobs/upload':
+                # Reject pathological nesting before Python's JSON decoder.
+                # Track quotes/escapes across chunks; braces in text are data.
+                for byte in message.get('body',b''):
+                    if quoted:
+                        if escaped:escaped=False
+                        elif byte==92:escaped=True
+                        elif byte==34:quoted=False
+                    elif byte==34:quoted=True
+                    elif byte in (91,123):
+                        depth+=1
+                        if depth>32:exceeded=True;break
+                    elif byte in (93,125):depth-=1
+            if exceeded or size > maximum:
                 # The multipart parser may turn exceptions raised by receive()
                 # into HTTP 400. Send an explicit 413 instead, while ensuring
                 # no further bytes are passed to the application.
@@ -441,13 +467,13 @@ def health():
     with db() as c:
         queue = c.execute("SELECT count(*) FROM jobs WHERE status IN ('queued','running')").fetchone()[0]
         cfg = json.loads(c.execute('SELECT value FROM settings WHERE id=1').fetchone()[0])
-        recent = c.execute('SELECT count(*) FROM workers WHERE seen>? AND id=?', (time.time()-90,cfg['worker'])).fetchone()[0]
+        recent = c.execute("SELECT count(*) FROM workers WHERE seen>? AND id=? AND coalesce(json_extract(info,'$.ready'),1)!=0", (time.time()-90,cfg['worker'])).fetchone()[0]
         if not worker_enabled(c,cfg['worker']):recent=0
         waiting=c.execute("SELECT count(*) FROM jobs WHERE status='queued'").fetchone()[0]
         running=c.execute("SELECT count(*) FROM jobs WHERE status='running'").fetchone()[0]
         capacity=hosting.capabilities(c)
         if not recent and worker_enabled(c,'s7-edge') and getenv('STT_S7_ENABLED','0')=='1' and getenv('STT_S7_SIDE_WORKER','0')=='1':
-            recent=c.execute("SELECT count(*) FROM workers WHERE id='s7-edge' AND seen>?",(time.time()-90,)).fetchone()[0]
+            recent=c.execute("SELECT count(*) FROM workers WHERE id='s7-edge' AND seen>? AND coalesce(json_extract(info,'$.ready'),1)!=0",(time.time()-90,)).fetchone()[0]
     pressure='free' if queue==0 else 'short' if queue<=3 else 'medium' if queue<=10 else 'high'
     return dict(online=bool(recent), queue=queue,waiting=waiting,running=running,pressure=pressure,paused=cfg['paused'],retention_hours=24,**capacity)
 
@@ -898,6 +924,8 @@ class Claim(BaseModel):
 class WorkerControl(BaseModel):
     id: str = Field(pattern=r'^[a-zA-Z0-9_-]{1,80}$')
     applied_enabled: bool | None = None
+    ready: bool | None = None
+    reason: str | None = Field(default=None,pattern='^(WORKSPACE_UNAVAILABLE|STORAGE_UNAVAILABLE|OUTBOX_PENDING)$')
 
 
 @app.post('/api/worker/control',dependencies=[Depends(worker)])
@@ -909,6 +937,9 @@ def worker_control(value: WorkerControl,request: Request):
         row=c.execute('SELECT info FROM workers WHERE id=?',(value.id,)).fetchone()
         info=json.loads(row['info']) if row else {}
         info['power_control_supported']=True
+        if value.ready is not None:
+            info['ready']=value.ready
+            info['readiness_reason']=value.reason if not value.ready else None
         if value.applied_enabled is not None and value.applied_enabled==enabled:
             info['power_state']='enabled' if enabled else 'disabled'
         elif not enabled:info['power_state']='stopping'
@@ -928,8 +959,11 @@ def claim(w: Claim, request: Request):
     if len(info)>8000: raise HTTPException(413,'Metadados do executor excedem o limite.')
     with db() as c:
         c.execute('BEGIN IMMEDIATE')
-        c.execute('INSERT OR REPLACE INTO workers VALUES (?,?,?)', (w.id,now,info))
+        previous=c.execute('SELECT info FROM workers WHERE id=?',(w.id,)).fetchone()
+        readiness={k:v for k,v in json.loads(previous['info']).items() if k in ('ready','readiness_reason')} if previous else {}
+        c.execute('INSERT OR REPLACE INTO workers VALUES (?,?,?)', (w.id,now,json.dumps(dict(w.info,**readiness))))
         if not worker_enabled(c,w.id):return {'job':None,'enabled':False}
+        if readiness.get('ready') is False:return {'job':None,'ready':False}
         cfg = json.loads(c.execute('SELECT value FROM settings WHERE id=1').fetchone()[0])
         side_s7 = (w.id == 's7-edge' and cfg['worker'] != 's7-edge'
                    and getenv('STT_S7_SIDE_WORKER','0')=='1')
@@ -1027,54 +1061,6 @@ def heartbeat(jid: str, h: Heartbeat, request: Request):
         c.execute('UPDATE workers SET seen=? WHERE id=?',(now,r['worker']))
     return {'ok':True}
 
-class Segment(BaseModel):
-    start: float = Field(ge=0,le=7200,allow_inf_nan=False)
-    end: float = Field(ge=0,le=7200,allow_inf_nan=False)
-    text: str = Field(max_length=10000)
-
-class Result(BaseModel):
-    lease: str
-    segments: list[Segment] = Field(default_factory=list,max_length=30000)
-    language: str = Field(default='',max_length=20)
-    duration: float = Field(default=0,ge=0,le=7200,allow_inf_nan=False)
-    elapsed: float = Field(default=0,ge=0,allow_inf_nan=False)
-    cpu_seconds: float = Field(default=0,ge=0,allow_inf_nan=False)
-    peak_rss_mb: float = Field(default=0,ge=0,allow_inf_nan=False)
-    peak_vram_mb: float = Field(default=0,ge=0,allow_inf_nan=False)
-    input_bytes: int = Field(default=0,ge=0)
-    error: str | None = Field(default=None,max_length=500)
-    runtime: dict = Field(default_factory=dict)
-    model_revision: str | None = Field(default=None,max_length=80)
-    title: str | None = Field(default=None,max_length=180)
-    result_state: str = Field(default='unknown',pattern='^(unknown|complete|silence|partial)$')
-    metrics: dict | None = None
-    text: str | None = Field(default=None,max_length=500000)
-    timing: str = Field(default='segments',pattern='^(segments|none)$')
-
-    @model_validator(mode='after')
-    def chronology(self):
-        if self.metrics is not None:
-            validate_metrics(self.metrics)
-            if abs(self.metrics['engine_elapsed_s']-self.elapsed)>0.5:
-                raise ValueError('Tempo total e métricas de motor inconsistentes.')
-        if self.timing == 'none' and self.segments:
-            raise ValueError('Untimed text cannot contain timed segments.')
-        if self.error and self.segments:
-            raise ValueError('Erro não pode conter segmentos publicados.')
-        previous = -1.0
-        for segment in self.segments:
-            if segment.end < segment.start:
-                raise ValueError('Segmento com intervalo invertido.')
-            if segment.start + 1e-6 < previous:
-                raise ValueError('Segmentos fora da ordem cronológica.')
-            if self.duration == 0 or segment.end > self.duration + 0.5:
-                raise ValueError('Segmento além da duração declarada.')
-            previous = segment.start  # legitimate overlapping speech is preserved
-        if self.result_state == 'silence' and self.segments:
-            raise ValueError('Silêncio não pode conter segmentos.')
-        if self.result_state in ('complete','partial') and not self.segments and not (self.text or '').strip() and not self.error:
-            raise ValueError('Resultado vazio exige estado silêncio ou desconhecido.')
-        return self
 
 def timestamp(n):
     ms = int(n*1000)
@@ -1082,8 +1068,7 @@ def timestamp(n):
 
 @app.post('/api/worker/{jid}/result', dependencies=[Depends(worker)])
 def result(jid: str, result: Result, request: Request):
-    canonical = json.dumps(result.model_dump(),sort_keys=True,ensure_ascii=False,separators=(',',':'),allow_nan=False)
-    receipt = hashlib.sha256(canonical.encode('utf-8')).hexdigest()
+    receipt = result_receipt(result)
     lease_hash = hashlib.sha256(result.lease.encode()).hexdigest()
     with db() as c:
         c.execute('BEGIN IMMEDIATE')

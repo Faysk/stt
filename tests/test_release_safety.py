@@ -58,7 +58,7 @@ def test_auth_recovers_after_operator_corrects_credentials(tmp_path,monkeypatch)
             attempts.append(1)
             if len(attempts)==1:
                 return reply(403)
-            return httpx.Response(200,json={'ok':True,'receipt':'c'*64},
+            return httpx.Response(200,json={'ok':True,'receipt':w.result_receipt(kwargs['json'])},
                                   request=httpx.Request('POST','https://invalid.example/result'))
 
     monkeypatch.setattr(w,'client',Client())
@@ -211,7 +211,11 @@ def test_generation_rejects_symlinked_results_directory(tmp_path):
     folder.mkdir()
     outside=tmp_path/'outside'
     outside.mkdir()
-    (folder/'results').symlink_to(outside,target_is_directory=True)
+    try:
+        (folder/'results').symlink_to(outside,target_is_directory=True)
+    except OSError as error:
+        if getattr(error,'winerror',None)==1314:pytest.skip('Windows symlink privilege unavailable; exercised in Linux CI')
+        raise
     with pytest.raises(OSError,match='Unsafe result storage directory'):
         mod._publish_generation(folder,'a'*64,{'txt':'must not escape'})
     assert list(outside.iterdir())==[]

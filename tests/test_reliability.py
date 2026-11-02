@@ -178,7 +178,7 @@ def test_durable_outbox_survives_transient_timeout_and_ack_loss(lab,monkeypatch)
         def post(self,path,**kwargs):
             calls.append(kwargs['json'].copy())
             if len(calls)==1: raise httpx.ReadTimeout('fixture')
-            return httpx.Response(200,json={'ok':True,'receipt':'a'*64,'duplicate':True},
+            return httpx.Response(200,json={'ok':True,'receipt':w.result_receipt(kwargs['json']),'duplicate':True},
                                  request=httpx.Request('POST','http://example.invalid'+path))
     monkeypatch.setattr(w,'client',Sender())
     assert w._deliver(path,now)=='pending'
@@ -224,7 +224,7 @@ def test_expired_download_never_spawns_inference(lab,monkeypatch):
     class Sender:
         def stream(self,*args,**kwargs):return Stream()
         def post(self,*args,**kwargs):
-            return httpx.Response(200,json={'ok':True,'receipt':'a'*64},
+            return httpx.Response(200,json={'ok':True,'receipt':w.result_receipt(kwargs['json'])},
                                   request=httpx.Request('POST','http://example.invalid'))
     monkeypatch.setattr(w,'client',Sender())
     monkeypatch.setattr(w.time,'time',lambda:clock[0])
@@ -348,7 +348,11 @@ def test_purge_does_not_follow_foreign_symlink(lab,tmp_path):
     foreign=tmp_path/'sentinel'
     foreign.mkdir()
     (foreign/'keep.txt').write_text('private')
-    folder.symlink_to(foreign,target_is_directory=True)
+    try:
+        folder.symlink_to(foreign,target_is_directory=True)
+    except OSError as error:
+        if getattr(error,'winerror',None)==1314:pytest.skip('Windows symlink privilege unavailable; exercised in Linux CI')
+        raise
     with m.db() as d:
         d.execute('UPDATE jobs SET expires=? WHERE id=?',(time.time()-1,jid))
     m.maintenance()

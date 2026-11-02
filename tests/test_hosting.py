@@ -24,10 +24,10 @@ def test_restricted_mode_tracks_primary_availability_and_explicit_s7_selection(m
     monkeypatch.setenv('STT_LIGHT_HOST', '1')
     with sqlite3.connect(':memory:') as connection:
         connection.row_factory = sqlite3.Row
-        connection.executescript('CREATE TABLE settings(id,value); CREATE TABLE workers(id,seen); CREATE TABLE worker_controls(id,enabled);')
+        connection.executescript('CREATE TABLE settings(id,value); CREATE TABLE workers(id,seen,info); CREATE TABLE worker_controls(id,enabled);')
         connection.execute('INSERT INTO settings VALUES(1,?)', (json.dumps({'worker':'notebook'}),))
         assert hosting.capabilities(connection, 100)['limited']
-        connection.execute('INSERT INTO workers VALUES(?,?)', ('notebook',99))
+        connection.execute('INSERT INTO workers VALUES(?,?,?)', ('notebook',99,'{}'))
         assert hosting.capabilities(connection, 100)['youtube']
         assert hosting.capabilities(connection, 190)['max_mb'] == 8
         connection.execute('UPDATE settings SET value=?', (json.dumps({'worker':'s7-edge'}),))

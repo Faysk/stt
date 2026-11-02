@@ -162,7 +162,8 @@ def spool(cfg,job,result):
     digest=hashlib.sha256(job["lease"].encode()).hexdigest()[:20]
     path=cfg["work"] / ("result-" + name + "-" + digest + ".json")
     data={"id":name,"lease":job["lease"],"expires":job["expires"],
-          "payload":dict(result,lease=job["lease"]),"next_try":0,"attempts":0}
+          "payload":dict(result,lease=job["lease"]),"next_try":0,"attempts":0,
+          "delivery_heartbeat":time.time()}
     size=len(json.dumps(data,ensure_ascii=False).encode('utf-8'))
     if size>1024**2:
         raise WorkerError("Result exceeds outbox budget")
@@ -170,22 +171,52 @@ def spool(cfg,job,result):
     atomic_json(path,data)
     return path
 
+def result_receipt(payload):
+    """stdlib mirror of server.result_contract; cross-runtime contract tested."""
+    value=dict(lease='',segments=[],language='',duration=0,elapsed=0,
+        cpu_seconds=0,peak_rss_mb=0,peak_vram_mb=0,input_bytes=0,error=None,
+        runtime={},model_revision=None,title=None,result_state='unknown',
+        metrics=None,text=None,timing='segments')
+    value.update({k:v for k,v in payload.items() if k in value})
+    for key in ('duration','elapsed','cpu_seconds','peak_rss_mb','peak_vram_mb'):
+        if key in payload:value[key]=float(value[key])
+    value['input_bytes']=int(value['input_bytes'])
+    value['segments']=[dict(start=float(s['start']),end=float(s['end']),text=s['text']) for s in value['segments']]
+    canonical=json.dumps(value,sort_keys=True,ensure_ascii=False,separators=(',',':'),allow_nan=False)
+    return hashlib.sha256(canonical.encode('utf-8')).hexdigest()
+
+
 def deliver(cfg,path):
     data=json.loads(path.read_text(encoding="utf-8"))
     now=time.time()
     if now >= data["expires"]:
         path.unlink(missing_ok=True)
         return "expired"
+    if data.get('stale'):return 'stale'
+    if 'quarantined_status' in data:return 'quarantined'
+    if now-data.get('delivery_heartbeat',path.stat().st_mtime)>=30:
+        try:
+            code,_=json_post(cfg,'/api/worker/'+data['id']+'/heartbeat',
+                {'lease':data['lease'],'stage':'finishing','progress':99},timeout=10)
+        except (OSError,URLError,ValueError,TimeoutError,WorkerError):return 'pending'
+        if code in (401,403):return 'auth_blocked'
+        if code not in (200,409):return 'pending'
+        data['delivery_heartbeat']=now;atomic_json(path,data)
     if now < data["next_try"]: return "pending"
     try:
         code,reply=json_post(cfg,"/api/worker/"+data["id"]+"/result",data["payload"],timeout=40)
     except (OSError,URLError,ValueError,TimeoutError,WorkerError):
         code,reply=503,None
     if code==200 and isinstance(reply,dict) and reply.get("ok") is True and re.fullmatch("[0-9a-f]{64}",str(reply.get("receipt",""))):
-        path.unlink(missing_ok=True)
-        return "acked"
+        if reply['receipt']==result_receipt(data['payload']):
+            path.unlink(missing_ok=True)
+            return "acked"
+        data['quarantined_status']=200
+        data['quarantined_reason']='receipt_mismatch'
+        atomic_json(path,data)
+        return 'quarantined'
     if code==409:
-        path.unlink(missing_ok=True)  # Lease expired or completed by another executor.
+        data['stale']=True;atomic_json(path,data)
         return "stale"
     if code in (401,403):
         return "auth_blocked"
@@ -213,10 +244,15 @@ def drain(cfg):
     for p in sorted(cfg["work"].glob("result-*.json")):
         try:
             status=deliver(cfg,p)
-            if status!="acked" and status!="expired" and status!="stale": blocking=True
+            if status in ('pending','auth_blocked'): blocking=True
             if status=="auth_blocked": return "auth_blocked"
         except (OSError,ValueError,KeyError,TypeError):
-            blocking=True
+            # Unreadable private spool cannot block the whole executor forever.
+            # Keep for one full TTL, then remove only this owned result file.
+            try:
+                if not p.is_symlink() and time.time()-p.stat().st_mtime>86400:
+                    p.unlink(missing_ok=True)
+            except OSError:pass
     return "pending" if blocking else "clear"
 
 def kill(proc):
@@ -363,12 +399,6 @@ def main():
     print("S7 worker ready (scoped HTTPS; compatible jobs only)",flush=True)
     storage_blocked=False
     while True:
-        status=drain(cfg)
-        if status=="auth_blocked":
-            raise WorkerError("Worker authentication denied; fix S7 key before restart")
-        if status=="pending":
-            time.sleep(SLEEP_SECONDS)
-            continue
         try:
             code,control=json_post(cfg,'/api/worker/control',{'id':ID},timeout=20)
             if code!=200 or not isinstance(control,dict):
@@ -377,6 +407,7 @@ def main():
             enabled=control.get('enabled') is True
             json_post(cfg,'/api/worker/control',{'id':ID,'applied_enabled':enabled},timeout=20)
             if not enabled:
+                drain(cfg)
                 time.sleep(5)
                 continue
         except (OSError,URLError,TimeoutError,ValueError):
@@ -385,12 +416,25 @@ def main():
         try:
             ensure_storage(cfg, reserve=JOB_RESERVE)
         except WorkerError:
+            try:json_post(cfg,'/api/worker/control',{'id':ID,'ready':False,'reason':'STORAGE_UNAVAILABLE'})
+            except (OSError,URLError,TimeoutError,ValueError,WorkerError):pass
             if not storage_blocked:
                 print("S7 worker waiting for storage budget",flush=True)
             storage_blocked=True
             time.sleep(30)
             continue
         storage_blocked=False
+        status=drain(cfg)
+        if status=='auth_blocked':raise WorkerError('Worker authentication denied')
+        try:
+            json_post(cfg,'/api/worker/control',{'id':ID,'ready':status!='pending',
+                'reason':'OUTBOX_PENDING' if status=='pending' else None})
+        except (OSError,URLError,TimeoutError,ValueError,WorkerError):
+            time.sleep(5)
+            continue
+        if status=='pending':
+            time.sleep(SLEEP_SECONDS)
+            continue
         caps=capabilities(cfg)
         try:
             code,reply=json_post(cfg,"/api/worker/claim",{"id":ID,"info":caps},timeout=20)

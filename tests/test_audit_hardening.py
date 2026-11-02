@@ -89,7 +89,7 @@ def test_transient_503_retries_and_ack_removes_spool(tmp_path, monkeypatch):
             calls.append(1)
             if len(calls) == 1:
                 return response(503)
-            return response(200, {'ok': True, 'receipt': 'a' * 64})
+            return response(200, {'ok': True, 'receipt': w.result_receipt(kwargs['json'])})
 
     monkeypatch.setattr(w, 'client', Client())
     now = time.time()

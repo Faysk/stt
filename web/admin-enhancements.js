@@ -220,7 +220,8 @@
       power.disabled=pendingPower.has(w.id);
       power.setAttribute('aria-label',(enabled?'Desligar ':'Ligar ')+w.id);
       const busy=(dashboardData.jobs||[]).some(job=>job.worker===w.id&&job.status==='running');
-      const state=enabled?(!online?'Offline':busy?'Processando':'Disponível'):info.power_state==='disabled'?'Desligado · modelo liberado':online?'Desligando · liberando recursos':'Desligamento solicitado · agente offline';
+      const blocked={WORKSPACE_UNAVAILABLE:'Armazenamento indisponível',STORAGE_UNAVAILABLE:'Sem espaço disponível',OUTBOX_PENDING:'Entregando resultado pendente'};
+      const state=enabled?(!online?'Offline':info.ready===false?(blocked[info.readiness_reason]||'Executor indisponível'):busy?'Processando':'Disponível'):info.power_state==='disabled'?'Desligado · modelo liberado':online?'Desligando · liberando recursos':'Desligamento solicitado · agente offline';
       actions.append(node('span',state,'small '+(enabled?'muted':'power-off-status')),select,power);
       power.addEventListener('click',async event=>{
         event?.stopPropagation?.();
