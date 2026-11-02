@@ -58,7 +58,7 @@ $('submit').onclick=async()=>{
   if(mode==='file'){
    await upload(selected);selected=null;$('file').value='';$('file-label').textContent=t('drop');
   }else{
-   await api('/api/jobs/youtube',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({url:$('url').value.trim()})});
+   await api('/api/jobs/link',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({url:$('url').value.trim()})});
    $('url').value='';
   }
   message(t('sent'));
@@ -158,7 +158,7 @@ function updateJobCard(card,j){
  let error=card.querySelector('.job-error');
  if(j.status==='failed'){
   if(!error){error=el('p','error small job-error');activity.after(error)}
-  error.textContent=t('error');
+  error.textContent=t(j.error==='LINK_UNAVAILABLE'?'linkUnavailable':j.error==='LINK_LIMIT'?'linkLimit':j.error==='LINK_NO_AUDIO'?'linkNoAudio':'error');
  }else if(error)error.remove();
  let warning=card.querySelector('.job-warning');
  if(j.status==='done'&&j.result_state==='partial'){if(!warning){warning=el('p','small partial-warning job-warning');activity.after(warning)}warning.textContent=t('partialHint')}else if(warning)warning.remove();
@@ -222,7 +222,7 @@ function render(){
  }
  for(const child of [...container.children])if(!keep.has(child))child.remove();
 }
-function showHealth(){if(!health)return;$('upload-limits').textContent=health.limited?limitedLabel():t('limits');$('link-tab').disabled=health.youtube===false;$('file').accept=health.formats?health.formats.map(ext=>'.'+ext).join(','):'audio/*,video/*,.mkv,.flac,.opus';if(health.youtube===false&&mode==='link')tab('file');$('health').dataset.pressure=!health.online?'offline':health.paused?'paused':health.pressure;$('health-text').textContent=health.paused?t('paused'):!health.online?t('offline'):`${t('online')} · ${health.queue} ${t('inQueue')}`;}
+function showHealth(){if(!health)return;$('upload-limits').textContent=health.limited?limitedLabel():t('limits');$('link-tab').disabled=(health.links??health.youtube)===false;$('file').accept=health.formats?health.formats.map(ext=>'.'+ext).join(','):'audio/*,video/*,.mkv,.flac,.opus';if((health.links??health.youtube)===false&&mode==='link')tab('file');$('health').dataset.pressure=!health.online?'offline':health.paused?'paused':health.pressure;$('health-text').textContent=health.paused?t('paused'):!health.online?t('offline'):`${t('online')} · ${health.queue} ${t('inQueue')}`;}
 async function refresh(){
  if(polling)return;polling=true;
  try{

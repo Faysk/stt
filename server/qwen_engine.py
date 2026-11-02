@@ -17,6 +17,7 @@ from pathlib import Path
 
 from server.metrics import make_metrics
 from server.config import getenv
+from server.video_download import download_video, VideoDownloadError
 
 RECIPES = {
     'qwen-fast': dict(repository='Qwen/Qwen3-ASR-0.6B-hf',
@@ -188,23 +189,20 @@ def run(config):
         # allocating a large GPU model. Bad input must not consume VRAM.
         media=folder/'input.media'
         if job['source']!='upload':
-            import yt_dlp
             _progress(folder,'downloading',0)
             t=time.perf_counter()
-            with yt_dlp.YoutubeDL({'format':'bestaudio/best','noplaylist':True,
-                    'outtmpl':str(media),'max_filesize':MAX_MEDIA_BYTES,'quiet':True,
-                    'socket_timeout':30,'retries':2,'progress_hooks':[enforce_download_progress],
-                    'match_filter':lambda info,**kwargs:
-                    'Duration >2h or livestream' if (info.get('duration') or 0)>7200 or info.get('is_live') else None}) as ydl:
-                ydl.extract_info(job['source'],download=True)
-            if not media.is_file() or media.stat().st_size > MAX_MEDIA_BYTES:
-                raise EngineError('QWEN_DOWNLOAD_TOO_LARGE')
+            media_info=download_video(job['source'],media,lambda value:_progress(folder,'downloading',value))
             stages['download_s']=time.perf_counter()-t
         if not media.is_file() or media.is_symlink() or media.stat().st_size > MAX_MEDIA_BYTES:
             raise EngineError('QWEN_MEDIA_TOO_LARGE_OR_MISSING')
         _progress(folder,'preparing',0)
         t=time.perf_counter()
-        probe_audio_duration(media,av)
+        try:
+            probe_audio_duration(media,av)
+        except EngineError as error:
+            if job['source']!='upload' and str(error)=='QWEN_NO_AUDIO_STREAM':
+                raise VideoDownloadError('LINK_NO_AUDIO') from error
+            raise
         stages['media_probe_s']=time.perf_counter()-t
         import torch
         from transformers import AutoModelForMultimodalLM, AutoProcessor
@@ -252,6 +250,7 @@ def run(config):
         state='complete' if transcript else 'silence'
         _progress(folder,'finishing',99)
         output=dict(segments=[],text=transcript,timing='none',result_state=state,
+                    title=media_info['title'] if job['source']!='upload' else None,
                     duration=duration,language=languages[0] if languages and len(set(languages))==1 else 'mixed/auto',
                     input_bytes=media.stat().st_size,
                     model_revision=recipe['revision'],
@@ -261,6 +260,8 @@ def run(config):
                              'torch':torch.__version__,
                              'transformers':__import__('transformers').__version__,
                              'hardware':hardware})
+    except VideoDownloadError as error:
+        output={'error':error.code}
     except Exception as error:
         print(f'Qwen inference failed: {type(error).__name__}',file=sys.stderr,flush=True)
         output={'error':'Não foi possível transcrever com o motor Qwen. Verifique o executor e o modelo local.'}

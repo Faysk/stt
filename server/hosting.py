@@ -24,7 +24,7 @@ def capabilities(connection, now=None):
     return dict(limited=restricted, max_mb=8 if restricted else 90,
                 max_seconds=300 if restricted else 7200,
                 formats=list(SMALL_FORMATS) if restricted else None,
-                youtube=not restricted)
+                youtube=not restricted,links=not restricted)
 
 
 def storage_guard(blob, reserve=0):

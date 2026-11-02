@@ -41,7 +41,7 @@ Após a expiração, o acesso é bloqueado imediatamente. A limpeza física é f
 
 ## Limites e qualidade
 
-Com um executor completo disponível, cada envio aceita até **90 MB** e **duas horas** de duração. Em modo limitado, são aceitos áudios WAV, MP3, OGG e M4A de até **8 MiB e 5 minutos**, com novos envios de YouTube desabilitados. A interface mostra a capacidade disponível no momento. Limites de frequência e capacidade de fila ajudam a distribuir os recursos do serviço. Vídeos do YouTube dependem de disponibilidade pública e das condições de acesso da plataforma.
+Com um executor completo disponível, cada envio aceita até **90 MB** e **duas horas** de duração. Em modo limitado, são aceitos áudios WAV, MP3, OGG e M4A de até **8 MiB e 5 minutos**, com novos envios por link desabilitados. A interface mostra a capacidade disponível no momento. Limites de frequência e capacidade de fila ajudam a distribuir os recursos do serviço. Links de YouTube, Instagram, TikTok, Facebook e X são reconhecidos automaticamente em um único campo. Vídeos precisam estar acessíveis publicamente; conteúdo privado, indisponível ou que exige login pode não ser importado. Nesse caso, envie o arquivo de áudio ou vídeo. Posts com vários vídeos utilizam apenas o primeiro item.
 
 A qualidade varia conforme ruído, idioma, sotaque e características da gravação. Revise o texto antes de usar em contextos que exigem precisão. A disponibilidade pode variar durante manutenção ou ajustes de capacidade.
 

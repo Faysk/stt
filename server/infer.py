@@ -12,6 +12,7 @@ from server.observability import package_versions
 from server.catalog import installed_models
 from server.metrics import make_metrics
 from server.config import getenv
+from server.video_download import download_video, VideoDownloadError
 
 MAX_MEDIA_BYTES = 90 * 1024**2
 MAX_AUDIO_SECONDS = 7200
@@ -87,13 +88,8 @@ def run(config):
         media=folder/'input.media'
         if job['source']!='upload':
             progress('downloading')
-            import yt_dlp
-            def limit(d):
-                if d.get('downloaded_bytes',0)>90*1024**2:
-                    raise ValueError('Download excede 90 MB.')
-            with yt_dlp.YoutubeDL({'js_runtimes':{'node':{}},'format':'bestaudio/best','noplaylist':True,'outtmpl':str(media),'max_filesize':MAX_MEDIA_BYTES,'socket_timeout':30,'retries':2,'quiet':True,'progress_hooks':[limit],'match_filter':lambda info,**kw: 'Duração máxima: 2 horas.' if (info.get('duration') or 0)>7200 or info.get('is_live') else None}) as ydl:
-                media_info=ydl.extract_info(job['source'],download=True)
-                if media_info: media_title=(media_info.get('title') or 'YouTube')[:180]
+            media_info=download_video(job['source'],media,lambda value:progress('downloading',value))
+            media_title=media_info['title']
         if job['source']!='upload':
             finish_stage('download_s')
         else:
@@ -104,6 +100,8 @@ def run(config):
             raise ValueError('Mídia excede o limite de 90 MB.')
         import av
         with av.open(str(media)) as container:
+            if job['source']!='upload' and not any(stream.type=='audio' for stream in container.streams):
+                raise VideoDownloadError('LINK_NO_AUDIO')
             duration=(container.duration or 0)/av.time_base
             if duration>MAX_AUDIO_SECONDS: raise ValueError('Duração máxima: 2 horas.')
             bounded_audio_duration(container)
@@ -125,6 +123,8 @@ def run(config):
         finish_stage('asr_s')
         progress('finishing',99)
         result=dict(segments=output,language=info.language,duration=info.duration,input_bytes=media.stat().st_size,model_revision=revisions.get(job['model']),title=media_title)
+    except VideoDownloadError as e:
+        result={'error':e.code}
     except Exception as e:
         print(f'Inference error: {type(e).__name__}',file=sys.stderr,flush=True)
         result={'error':'Não foi possível transcrever. Verifique o arquivo, o acesso ao vídeo ou a configuração do executor.'}

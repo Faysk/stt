@@ -19,6 +19,7 @@ from server.observability import package_versions
 from server.config import getenv, required
 from server import workspace
 from server.result_contract import result_receipt
+from server.video_download import VideoDownloadError
 
 load_dotenv()
 BASE = getenv('STT_URL','http://127.0.0.1:8765').rstrip('/')
@@ -331,7 +332,7 @@ def execute(job):
         # spooling, and an earlier API/test lifecycle can leave it stale.
         # Worker inference needs an independent, persistent parent directory.
         temp_root = getenv('STT_TMP') or str(ROOT / 'worker-tmp')
-        with workspace.directory(temp_root) as temp:
+        with workspace.directory(temp_root,before_cleanup=lambda:_stop_child(proc)) as temp:
             folder = Path(temp)
             progress_file=folder/'progress.json'
             config = folder/'job.json'
@@ -347,8 +348,16 @@ def execute(job):
             check_budget()  # Nothing may spawn after a slow or expired download.
             flags = {'creationflags':subprocess.CREATE_NEW_PROCESS_GROUP} if os.name=='nt' else {'start_new_session':True}
             proc = subprocess.Popen(_engine_command(job,config),cwd=ROOT,**flags)
+            download_deadline=time.monotonic()+600 if job['source']!='upload' else None
             while proc.poll() is None:
                 check_budget()
+                if download_deadline is not None:
+                    try:
+                        if progress_file.exists() and json.loads(progress_file.read_text(encoding='utf-8')).get('stage') not in ('preparing','downloading'):
+                            download_deadline=None
+                    except (OSError,ValueError):pass
+                    if download_deadline is not None and time.monotonic()>=download_deadline:
+                        raise VideoDownloadError('LINK_LIMIT')
                 time.sleep(min(1,max(0.01,deadline-time.time())))
             check_budget()
             output = folder/'result.json'
@@ -365,7 +374,7 @@ def execute(job):
         if not lost.is_set() and time.time() < job['expires']:
             # Processing failed: report failure. Transport errors never enter here.
             try:
-                path = _save_outbox(job,{'error':'Falha no executor. Tente outro arquivo ou avise o administrador.'})
+                path = _save_outbox(job,{'error':error.code if isinstance(error,VideoDownloadError) else 'Falha no executor. Tente outro arquivo ou avise o administrador.'})
                 _deliver(path)
             except (OSError,ValueError) as exc:
                 print(f"Job {job['id']}: unable to persist failure: {type(exc).__name__}",flush=True)

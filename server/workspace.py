@@ -20,7 +20,7 @@ def root_path(value):
 
 
 @contextmanager
-def directory(root):
+def directory(root,before_cleanup=None):
     root = root_path(root)
     # tempfile.mkdtemp retries some Windows PermissionErrors as collisions.
     # Only an actual existing name is a reason to try a different name here.
@@ -36,6 +36,7 @@ def directory(root):
     try:
         yield folder
     finally:
+        if before_cleanup is not None:before_cleanup()
         shutil.rmtree(folder)
 
 

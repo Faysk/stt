@@ -11,7 +11,6 @@ import time
 import tempfile
 from contextlib import asynccontextmanager, contextmanager
 from pathlib import Path
-from urllib.parse import urlparse, parse_qs
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Request, UploadFile, File, Depends
@@ -25,6 +24,7 @@ from server.config import getenv
 from server.ssh_targets import ssh_targets
 from server import admin_auth
 from server import hosting
+from server.video_links import video_link, VideoLinkError
 
 load_dotenv()
 ROOT = Path(__file__).resolve().parents[1]
@@ -251,7 +251,7 @@ async def guard(request: Request, call_next):
         key = getenv('STT_EDGE_KEY', '')
         if not key or not hmac.compare_digest(request.headers.get('x-edge-key', ''), key):
             return denied('Origem não autorizada.', 403)
-    if request.url.path in ('/api/jobs/upload','/api/jobs/youtube') and request.method=='POST':
+    if request.url.path in ('/api/jobs/upload','/api/jobs/youtube','/api/jobs/link') and request.method=='POST':
         token=request.headers.get('x-session-key','')
         if len(token)!=64 or any(ch not in '0123456789abcdef' for ch in token):
             return denied('Sessão inválida.', 401)
@@ -302,7 +302,7 @@ def owner(request: Request):
 
 def preflight(request: Request):
     """Admission runs in HTTP middleware, BEFORE Starlette reads multipart bytes."""
-    if request.method != 'POST' or request.url.path not in ('/api/jobs/upload','/api/jobs/youtube'):
+    if request.method != 'POST' or request.url.path not in ('/api/jobs/upload','/api/jobs/youtube','/api/jobs/link'):
         return None
     session = request.headers['x-session-key']
     own = hashlib.sha256(session.encode()).hexdigest()
@@ -378,7 +378,7 @@ def new_job(c, own, title, source, request=None):
     network=hmac.new(getenv('STT_EDGE_KEY','local').encode(),ip.encode(),'sha256').hexdigest()[:16] if ip else None
     lang=request.headers.get('x-ui-language','en')[:12] if request else 'en'
     c.execute('UPDATE jobs SET client_tag=?,network_tag=?,ui_language=? WHERE id=?',(client_tag(own),network,lang,jid))
-    obs.event(c,jid,'submitted',actor='session:'+client_tag(own),data={'source':'upload' if source=='upload' else 'youtube'})
+    obs.event(c,jid,'submitted',actor='session:'+client_tag(own),data={'source':'upload' if source=='upload' else 'link'})
     return jid
 
 def body_limit(path):
@@ -528,30 +528,26 @@ class Link(BaseModel):
     url: str = Field(max_length=2048)
 
 def youtube_url(value):
+    # Compatibility helper for callers that explicitly require YouTube.
     try:
-        u = urlparse(value)
-        port = u.port
-    except ValueError:
-        raise HTTPException(400,'Link inválido.')
-    if u.scheme != 'https' or u.username or u.password or port not in (None,443):
-        raise HTTPException(400, 'Use um link HTTPS do YouTube.')
-    video = ''
-    if u.hostname in ('youtube.com','www.youtube.com','m.youtube.com'):
-        if u.path == '/watch': video = parse_qs(u.query).get('v',[''])[0]
-        elif u.path.startswith(('/shorts/','/live/')): video = u.path.split('/')[2]
-    elif u.hostname == 'youtu.be': video = u.path.lstrip('/')
-    if len(video) != 11 or any(ch not in 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-' for ch in video):
-        raise HTTPException(400, 'Link de vídeo do YouTube inválido. Playlists não são aceitas.')
-    return 'https://www.youtube.com/watch?v=' + video
+        link=video_link(value)
+        if link.platform!='YouTube':raise VideoLinkError('YouTube required')
+        return link.url
+    except VideoLinkError:
+        raise HTTPException(400,'Link de vídeo do YouTube inválido.') from None
 
-@app.post('/api/jobs/youtube', status_code=201)
-def youtube(link: Link, request: Request, own=Depends(owner)):
-    url = youtube_url(link.url)
+@app.post('/api/jobs/link', status_code=201)
+@app.post('/api/jobs/youtube', status_code=201,include_in_schema=False)
+def submit_link(link: Link, request: Request, own=Depends(owner)):
+    try:parsed=video_link(link.url)
+    except VideoLinkError:
+        raise HTTPException(400,'Use um link de vídeo do YouTube, Instagram, TikTok, Facebook ou X.') from None
+    url=parsed.url
     folder = None
     created = False
     try:
         with db() as c:
-            jid = new_job(c, own, 'YouTube', url,request)
+            jid = new_job(c, own, parsed.platform, url,request)
             folder = BLOB / jid
             # The job must not be published in SQLite without durable input
             # workspace; failure here rolls back the queue insertion.
