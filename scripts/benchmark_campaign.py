@@ -121,8 +121,23 @@ def completed(folder,row):
         if (path.parent/'excluded.json').exists():continue
         result=read(path)
         if result and result.get('instrumentation_version',0)>=2:
+            result.setdefault('execution_condition','reserved_notebook')
             return dict(row,**result,artifact=str(path.relative_to(folder)).replace('\\','/'))
     return None
+
+
+def shared_cpu_allowed(folder,cfg):
+    return (cfg.get('execution_policy',{}).get('cpu_with_public_gpu') is True
+            and all(row['device']=='cpu' for row in cfg['plan'] if not completed(folder,row)))
+
+
+def conflicting_public_worker(worker,data,shared_cpu):
+    if not worker['enabled']:return False
+    if not shared_cpu:return True
+    cfg=data['settings']
+    return ((cfg.get('worker')=='notebook' and cfg.get('device')!='cuda') or
+            any(j.get('worker')=='notebook' and j.get('status')=='running' and j.get('device')=='cpu'
+                for j in data.get('jobs',[])))
 
 
 def report(folder,cfg,current=None):
@@ -134,12 +149,13 @@ def report(folder,cfg,current=None):
     good=sum(row['status']=='complete' for row in rows)
     value=dict(updated=time.time(),id=cfg['id'],source=cfg['source'],total=len(rows),finished=done,
         successful=good,failed=done-good,current=current,rows=rows,
+        execution_policy=cfg.get('execution_policy',{}),
         accuracy_note='Legendas automáticas não revisadas: WER abaixo mede divergência, não precisão real.')
     atomic_json(folder/'report-data.json',value)
     columns=('id','status','model','device','compute','compute_effective','duration_s','engine_elapsed_s',
         'asr_rtf','total_rtf','cpu_seconds','process_cpu_normalized_mean','process_rss_mb_peak',
         'process_gpu_dedicated_mb_peak','gpu_host_used_mb_peak','gpu_board_power_w_mean',
-        'gpu_board_energy_wh','gpu_temperature_c_peak','language','words','failure_kind')
+        'gpu_board_energy_wh','gpu_temperature_c_peak','language','words','failure_kind','execution_condition')
     output=io.StringIO();writer=csv.DictWriter(output,fieldnames=columns,extrasaction='ignore');writer.writeheader();writer.writerows(rows)
     (folder/'comparison.csv').write_text(output.getvalue(),encoding='utf-8-sig')
     summary=(f"# Benchmark integral — {cfg['source']['title']}\n\n"
@@ -148,6 +164,8 @@ def report(folder,cfg,current=None):
         "Energia registrada é da placa GPU inteira, incluindo outros processos; energia CPU não medida.\n"
         "WER/CER contra legendas automáticas representam concordância, não precisão humana.\n\n"
         "Veja comparison.csv, report.html e os arquivos de cada execução em runs/.\n")
+    if cfg.get('execution_policy',{}).get('cpu_with_public_gpu'):
+        summary+='\nEnsaios restantes de CPU autorizados em paralelo ao serviço GPU. CPU/RAM/I/O são compartilhados; execution_condition identifica as condições em cada linha do CSV.\n'
     (folder/'SUMMARY.md').write_text(summary,encoding='utf-8')
     return value
 
@@ -211,7 +229,17 @@ def run(folder,explicit_resume=False):
     if file_hash(cfg['media'])!=cfg['media_sha256']:raise ValueError('Input media hash changed')
     try:
         report_server(folder)
-        reserve(folder,retake=explicit_resume)
+        shared_cpu=shared_cpu_allowed(folder,cfg)
+        if shared_cpu:
+            worker,data=power_state()
+            if conflicting_public_worker(worker,data,True):
+                raise RuntimeError('Parallel CPU benchmark requires public worker configured for CUDA')
+            reservation=read(folder/'reservation.json')
+            if reservation and not reservation.get('restored'):
+                reservation.update(restored=True,released_at=time.time(),
+                    reason='operator_authorized_cpu_benchmark_with_public_gpu',power_unchanged=True)
+                atomic_json(folder/'reservation.json',reservation)
+        else:reserve(folder,retake=explicit_resume)
         ctypes.windll.kernel32.SetThreadExecutionState(0x80000001)
         for row in cfg['plan']:
             if completed(folder,row):continue
@@ -229,11 +257,15 @@ def run(folder,explicit_resume=False):
                 active.mkdir()
                 trial=dict(row,campaign=str(folder),media=cfg['media'],media_sha256=cfg['media_sha256'],
                     options=cfg['options'],model_path=cfg['models'][row['model']]['path'],
-                    model_revision=cfg['models'][row['model']]['revision'])
+                    model_revision=cfg['models'][row['model']]['revision'],
+                    execution_condition='cpu_with_public_gpu_allowed' if shared_cpu else 'reserved_notebook')
                 atomic_json(active/'job.json',trial)
                 with (active/'stdout.log').open('ab') as out,(active/'stderr.log').open('ab') as err:
+                    child_env=os.environ.copy()
+                    if row['device']=='cpu':child_env['CUDA_VISIBLE_DEVICES']='-1'
                     child=subprocess.Popen([str(ROOT/'.venv/Scripts/python.exe'),
                         str(ROOT/'scripts/benchmark_trial.py'),str(active/'job.json')],cwd=ROOT,
+                        env=child_env,
                         stdin=subprocess.DEVNULL,stdout=out,stderr=err,creationflags=subprocess.CREATE_NO_WINDOW)
                 process=psutil.Process(child.pid)
                 # Windows venv launcher may spawn the base Python process. The
@@ -260,8 +292,8 @@ def run(folder,explicit_resume=False):
                 if time.time()-last_check>=30:
                     last_check=time.time()
                     try:
-                        worker,_=power_state()
-                        if worker['enabled']:
+                        worker,data=power_state()
+                        if conflicting_public_worker(worker,data,shared_cpu):
                             (folder/'PAUSE').write_text('Notebook enabled during campaign',encoding='utf-8')
                             stop_trial(process,active/'job.json');interrupted=True;break
                     except Exception:pass  # API outage cannot start public work.

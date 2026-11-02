@@ -157,6 +157,7 @@ def run(config):
         cpu=process.cpu_times();cpu_seconds=max(0,cpu.user+cpu.system-cpu_baseline.user-cpu_baseline.system)
         active_samples=[s for s in samples if s['at']>=start]
         output.update(instrumentation_version=2,started=start,finished=finished,cpu_seconds=cpu_seconds,
+            execution_condition=cfg.get('execution_condition','reserved_notebook'),
             process_rss_mb_peak=max((s['rss_mb'] for s in samples),default=None),
             process_cpu_percent_peak=max((s['process_cpu_percent'] for s in samples),default=None),
             process_cpu_normalized_mean=cpu_seconds/max(.001,finished-start)*100/(psutil.cpu_count() or 1),

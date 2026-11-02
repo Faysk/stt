@@ -92,3 +92,26 @@ def test_atomic_progress_write_does_not_retry_permanent_denial_forever(tmp_path,
     monkeypatch.setattr(b.time,'sleep',lambda _:None)
     with pytest.raises(PermissionError):atomic_json(tmp_path/'progress.json',{'progress':50})
     assert len(attempts)==12
+
+
+def test_cpu_parallel_opt_in_cannot_allow_pending_gpu_benchmark(tmp_path):
+    c=module('bench_parallel_test','benchmark_campaign.py')
+    cpu={'id':'cpu-small-int8','device':'cpu'}
+    gpu={'id':'cuda-small-float16','device':'cuda'}
+    cfg={'execution_policy':{'cpu_with_public_gpu':True},'plan':[cpu]}
+    assert c.shared_cpu_allowed(tmp_path,cfg)
+    cfg['plan'].append(gpu)
+    assert not c.shared_cpu_allowed(tmp_path,cfg)
+    assert not c.shared_cpu_allowed(tmp_path,{'plan':[cpu]})
+
+
+def test_shared_cpu_allows_public_cuda_but_not_competing_cpu_job():
+    c=module('bench_parallel_guard_test','benchmark_campaign.py')
+    worker={'enabled':True}
+    data={'settings':{'worker':'notebook','device':'cuda'},'jobs':[]}
+    assert not c.conflicting_public_worker(worker,data,True)
+    assert c.conflicting_public_worker(worker,data,False)
+    data['jobs']=[{'worker':'notebook','status':'running','device':'cpu'}]
+    assert c.conflicting_public_worker(worker,data,True)
+    data['jobs']=[];data['settings']={'worker':'s7-edge','device':'cpu'}
+    assert not c.conflicting_public_worker(worker,data,True)

@@ -100,6 +100,20 @@ benchmark e deixa o executor público desligado para o operador usar a máquina.
 Se o executor for ligado manualmente durante o benchmark, a campanha pausa em
 vez de disputar a máquina com a fila pública.
 
+Existe uma exceção opcional autorizada pelo operador:
+`execution_policy.cpu_with_public_gpu=true`. Ela só se aplica quando **todos os
+ensaios pendentes são de CPU**. O serviço público pode continuar em CUDA, mas
+um trabalho público em CPU ainda provoca pausa. O processo de benchmark CPU
+recebe `CUDA_VISIBLE_DEVICES=-1`; o ambiente do worker público não é alterado.
+A reserva anterior é liberada sem mudar novamente a potência do executor.
+
+Essa operação compartilha CPU, RAM, I/O e refrigeração: uma transcrição na GPU
+também usa CPU no preparo e parte do processamento. Portanto, os novos ensaios
+ficam marcados como `cpu_with_public_gpu_allowed` em `execution_condition`,
+enquanto os anteriores permanecem `reserved_notebook`. Não tratar tempos sob
+carga concorrente como medições isoladas equivalentes. As combinações do
+benchmark continuam sendo executadas uma por vez.
+
 ## Interrupções e inicialização
 
 - Lock exclusivo impede dois coordenadores para a mesma campanha.
