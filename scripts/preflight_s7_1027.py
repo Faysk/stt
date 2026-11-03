@@ -83,7 +83,7 @@ def origin_guard_http():
     except (OSError,UnicodeError,ValueError):
         return result
     if not isinstance(edge_key,str) or len(edge_key)<32 or any(
-        c in edge_key for c in '\\r\\n\\x00'
+        c in edge_key for c in '\r\n\x00'
     ):
         return result
     opener = build_opener(ProxyHandler({}),NoRedirect())
