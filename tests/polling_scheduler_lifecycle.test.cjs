@@ -73,7 +73,7 @@ async function adminScheduler(){
  await scheduler.tick();
  assert.equal(calls,1);
  assert.equal(scheduler.scheduled.size,1);
- assert.match(code,/function lockAdmin\(\)\{clearTimeout\(adminRefreshTimer\);adminRefreshTimer=null;lastPeriodLoad=0;/);
+ assert.match(code,/function lockAdmin\(\)\{authEpoch\+\+;historyRequestId\+\+;clearTimeout\(adminRefreshTimer\);adminRefreshTimer=null;lastPeriodLoad=0;/);
  assert.match(code,/signIn\(csrf\)\{[^}]*lastPeriodLoad=0/);
 }
 (async()=>{await publicScheduler();await adminScheduler();
