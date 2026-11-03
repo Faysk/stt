@@ -15,6 +15,7 @@ def good_report():
         "edge_secret_present":True,"require_edge_enabled":True,
         "database_present":True,"on_external_volume":True,
         "queue_checked":True,"jobs_queued":0,"jobs_active":0,"outbox_count":0,
+        "primary_workspace_present":True,
         "worker_entrypoint_local":True,"worker_runit_running":True,
         "runtime_worker_sha256":"worker-sha",
         "runtime_entrypoint_sha256":"entry-sha",
@@ -77,3 +78,36 @@ def test_readonly_probe_discloses_no_keys_and_uses_read_only_sqlite():
     assert "subprocess.run(['/data/data/com.termux/files/usr/bin/sv','status'" in code
     for forbidden in ("os.chmod(","shutil.rmtree(","INSERT INTO","UPDATE jobs","sv restart","cloudflared tunnel"):
         assert forbidden not in code
+
+def test_real_remote_outbox_function_detects_partial_files_and_missing_directory(tmp_path):
+    # Execute only the read-only remote function definitions against a temporary
+    # HOME; do not run SSH, socket checks, API calls, or the final print block.
+    functions = module.REMOTE.split("\\nresult = {", 1)[0]
+    assert "def outbox_count():" in functions
+    context = {}
+    exec(functions, context)
+    context["home"] = tmp_path
+    check = context["outbox_count"]
+    assert check() is None, "Missing current/legacy workspace must not mean zero"
+    primary = tmp_path / ".cache" / "stt-worker"
+    primary.mkdir(parents=True)
+    assert check() == 0
+    (primary / "result-job1-leasehash.json").write_text("{}", encoding="utf-8")
+    assert check() == 1
+    (primary / "result-job2-leasehash.json.0123456789.tmp").write_text("partial", encoding="utf-8")
+    assert check() == 2, "An interrupted atomic write must block a reload"
+    (primary / "result-unknown").write_text("unknown", encoding="utf-8")
+    assert check() == 3, "Unknown result artifacts must not be silently ignored"
+    (primary / "result-job3").symlink_to(primary / "result-unknown")
+    assert check() is None, "Symlink artifact must fail closed"
+
+
+def test_after_phase_requires_current_worker_workspace():
+    report = good_report()
+    report["primary_workspace_present"] = False
+    assessed = module.assess(report,"worker-sha","entry-sha","after")
+    assert not assessed["checks_passed"]
+    assert "primary_workspace_missing" in assessed["blockers"]
+    # Before-phase may be used with legacy worker layouts for diagnostics.
+    assessed_before = module.assess(report,"worker-sha","entry-sha","before")
+    assert assessed_before["checks_passed"]
