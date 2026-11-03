@@ -5,7 +5,9 @@ PREFIX=${PREFIX:-/data/data/com.termux/files/usr}
 HOME=${HOME:-/data/data/com.termux/files/home}
 export PREFIX HOME
 export PATH="$PREFIX/bin:/system/bin"
-export STT_URL=https://stt.faysk.dev
+export STT_URL=http://127.0.0.1:8786
+# Origin authentication stays enforced; local key is read from private API runtime.
+export STT_S7_LOCAL_API_ENV="$HOME/.local/share/stt-api/runtime/.env"
 export STT_S7_WORK="$HOME/.cache/stt-worker"
 export STT_S7_ROOT="$HOME/stt-lab/whisper.cpp"
 app="$HOME/storage/external-1/stt-worker"
