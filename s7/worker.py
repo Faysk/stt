@@ -51,7 +51,7 @@ def local_edge_key():
     if path.is_symlink() or not path.is_file():
         raise WorkerError("Private API settings missing for loopback worker")
     metadata = path.stat()
-    if metadata.st_mode & 0o077 or metadata.st_size > 65536:
+    if (os.name != 'nt' and metadata.st_mode & 0o077) or metadata.st_size > 65536:
         raise WorkerError("Private API settings permissions/size invalid")
     for line in path.read_text(encoding="utf-8").splitlines():
         if line.startswith("STT_EDGE_KEY="):
