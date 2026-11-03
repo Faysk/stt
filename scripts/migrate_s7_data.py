@@ -14,6 +14,7 @@ import tarfile
 import time
 import urllib.error
 import urllib.request
+import urllib.parse
 from dotenv import dotenv_values
 
 ROOT=Path(__file__).resolve().parents[1]
@@ -57,19 +58,37 @@ print(json.dumps({'migrated_jobs':jobs,'transferred_bytes':total,'integrity':'ok
 '''
 
 
+class NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, *args, **kwargs):
+        return None
+
+
+def open_checked(request, timeout):
+    """Refuse redirects and all hosts other than the two known STT endpoints."""
+    parsed = urllib.parse.urlsplit(request.full_url)
+    local = (parsed.scheme == 'http' and parsed.hostname == '127.0.0.1'
+             and parsed.port == 8765
+             and parsed.path in ('/api/admin', '/api/admin/settings'))
+    public = (parsed.scheme == 'https' and parsed.hostname == 'stt.faysk.dev'
+              and parsed.port is None and parsed.path == '/api/health')
+    if not (local or public) or parsed.username or parsed.password or parsed.query or parsed.fragment:
+        raise ValueError('UNTRUSTED_MIGRATION_ENDPOINT')
+    return urllib.request.build_opener(NoRedirect()).open(request, timeout=timeout)
+
+
 def main(apply=False):
     values=dotenv_values(ROOT/'.env')
     data=Path(values.get('STT_DATA') or ROOT).resolve()
     headers={'x-admin-key':values['STT_ADMIN_KEY'],'x-edge-key':values['STT_EDGE_KEY'],'content-type':'application/json'}
     url='http://127.0.0.1:8765/api/admin'
-    with urllib.request.urlopen(urllib.request.Request(url,headers=headers),timeout=15) as response:
+    with open_checked(urllib.request.Request(url,headers=headers),timeout=15) as response:
         state=json.load(response)
     if any(job['status'] in ('running','uploading') for job in state['jobs']):
         raise SystemExit('DRAIN_ACTIVE_JOBS_FIRST')
     print(json.dumps({'preview':not apply,'queued':state['counts'].get('queued',0)}),flush=True)
     if not apply:return
     try:
-        urllib.request.urlopen(urllib.request.Request('https://stt.faysk.dev/api/health',headers={'User-Agent':'Mozilla/5.0'}),timeout=15)
+        open_checked(urllib.request.Request('https://stt.faysk.dev/api/health',headers={'User-Agent':'Mozilla/5.0'}),timeout=15)
         raise SystemExit('PUBLIC_MAINTENANCE_REQUIRED')
     except urllib.error.HTTPError as error:
         if error.code!=503:raise SystemExit('PUBLIC_MAINTENANCE_NOT_CONFIRMED')
@@ -77,7 +96,7 @@ def main(apply=False):
     backup.mkdir(exist_ok=False)
     (backup/'settings-before.json').write_text(json.dumps(state['settings']))
     settings=dict(state['settings'],paused=True)
-    urllib.request.urlopen(urllib.request.Request(url+'/settings',headers=headers,method='PUT',data=json.dumps(settings).encode()),timeout=15).close()
+    open_checked(urllib.request.Request(url+'/settings',headers=headers,method='PUT',data=json.dumps(settings).encode()),timeout=15).close()
     source=data/'db/stt.sqlite3'
     with sqlite3.connect(source.as_uri()+'?mode=ro',uri=True) as src,sqlite3.connect(backup/'stt.sqlite3') as dst:
         if src.execute('SELECT count(*) FROM upload_slots').fetchone()[0]:raise SystemExit('UPLOADS_STILL_IN_FLIGHT')
