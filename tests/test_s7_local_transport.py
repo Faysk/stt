@@ -39,10 +39,11 @@ def test_local_worker_passes_both_keys_only_to_loopback(tmp_path, monkeypatch):
 
 def test_local_worker_rejects_untrusted_settings(tmp_path, monkeypatch):
     _, settings = local_config(tmp_path, monkeypatch)
-    settings.chmod(0o644)
-    with pytest.raises(w.WorkerError, match="permissions"):
-        w.config_from_environment()
-    settings.chmod(0o600)
+    if __import__('os').name != 'nt':
+        settings.chmod(0o644)
+        with pytest.raises(w.WorkerError, match="permissions"):
+            w.config_from_environment()
+        settings.chmod(0o600)
     settings.write_text("STT_EDGE_KEY=bad\n", encoding="utf-8")
     with pytest.raises(w.WorkerError, match="authentication"):
         w.config_from_environment()
