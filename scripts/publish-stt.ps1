@@ -7,7 +7,8 @@
 [CmdletBinding()]
 param(
     [switch]$Apply,
-    [switch]$QueueDrained
+    [switch]$QueueDrained,
+    [switch]$WindowsCoordinatorConfirmed
 )
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
@@ -139,6 +140,22 @@ try {
     }
     if (-not $QueueDrained) {
         throw 'QUEUE_NOT_CONFIRMED: operator must verify no queued/running jobs, then pass -QueueDrained'
+    }
+
+    # Windows is not the authoritative coordinator after the S7 cutover.
+    # This legacy publisher must not spawn Windows API:8765 accidentally.
+    if (-not $WindowsCoordinatorConfirmed) {
+        throw 'S7_COORDINATOR_GUARD: legacy Windows API publisher blocked. See docs/QUOTA_1027_RELEASE.md.'
+    }
+    $hostApiFlags = @(
+        foreach ($line in [System.IO.File]::ReadAllLines((Join-Path $root '.env'))) {
+            if ($line -match '^\s*STT_HOST_API\s*=\s*(.+?)\s*$') {
+                $Matches[1].Trim().Trim('"').Trim("'")
+            }
+        }
+    )
+    if ($hostApiFlags.Count -ne 1 -or $hostApiFlags[0] -cne '1') {
+        throw 'WINDOWS_COORDINATOR_NOT_AUTHORIZED: STT_HOST_API=1 and separately approved database migration required.'
     }
 
     Write-Host 'Updating main (fast-forward only)...'
