@@ -241,7 +241,7 @@ async function refresh(){
    container.replaceChildren(empty);
    container.setAttribute('aria-busy','false');
   }
- }finally{polling=false}
+ }finally{polling=false;if(refreshTimer!==null)schedulePublicRefresh()}
 }
 function publicRefreshDelay(){
  if(document.hidden)return 60000;
