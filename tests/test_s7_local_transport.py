@@ -14,7 +14,7 @@ def local_config(tmp_path, monkeypatch):
     key.chmod(0o600)
     monkeypatch.setenv("STT_S7_KEY_FILE", str(key))
     settings = tmp_path / "api.env"
-    settings.write_text('STT_EDGE_KEY=' + json.dumps("e" * 64) + "\n", encoding="utf-8")
+    settings.write_text('STT_EDGE_KEY=' + json.dumps("key-rn0x" * 8) + "\n", encoding="utf-8")
     settings.chmod(0o600)
     monkeypatch.setenv("STT_S7_LOCAL_API_ENV", str(settings))
     return key, settings
@@ -25,7 +25,7 @@ def test_local_worker_passes_both_keys_only_to_loopback(tmp_path, monkeypatch):
     # On Windows, POSIX scoped-key file modes are not representable; exercise
     # the HTTP contract with a fixture config. Linux CI covers config_from_environment.
     cfg = (w.config_from_environment() if __import__('os').name != 'nt'
-           else {'url':w.LOCAL_API,'key':'s'*64,'edge_key':'e'*64})
+           else {'url':w.LOCAL_API,'key':'s'*64,'edge_key':'key-rn0x'*8})
     headers = {}
     class Response:
         status = 200
@@ -36,7 +36,7 @@ def test_local_worker_passes_both_keys_only_to_loopback(tmp_path, monkeypatch):
             return Response()
     monkeypatch.setattr(w, "build_opener", lambda *args: Opener())
     assert w.call(cfg, "/api/worker/claim", "POST", b"{}")[0] == 200
-    assert headers["X-edge-key"] == "e" * 64
+    assert headers["X-edge-key"] == "key-rn0x" * 8
     assert headers["X-worker-key"] == "s" * 64
 
 
