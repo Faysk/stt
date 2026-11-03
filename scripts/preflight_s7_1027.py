@@ -86,7 +86,7 @@ def queue_counters():
 
 def worker_running():
     try:
-        result = subprocess.run(['sv','status',str(home/'.local/share/stt-services/worker')],
+        result = subprocess.run(['/data/data/com.termux/files/usr/bin/sv','status',str(home/'.local/share/stt-services/worker')],
                                 capture_output=True,text=True,timeout=3,check=False)
         return result.returncode == 0 and result.stdout.startswith('run:')
     except (OSError, subprocess.TimeoutExpired):
@@ -193,8 +193,8 @@ def main(argv=None):
         result=json.loads(run.stdout.strip())
         if not isinstance(result,dict):
             raise ValueError('Unexpected read-only probe output')
-        expected_worker=hashlib.sha256((ROOT/'s7/worker.py').read_bytes()).hexdigest()
-        expected_entry=hashlib.sha256((ROOT/'s7/service-run.sh').read_bytes()).hexdigest()
+        expected_worker=hashlib.sha256((ROOT/'s7/worker.py').read_bytes().replace(b'\r\n',b'\n')).hexdigest()
+        expected_entry=hashlib.sha256((ROOT/'s7/service-run.sh').read_bytes().replace(b'\r\n',b'\n')).hexdigest()
         summary=assess(result,expected_worker,expected_entry,args.phase)
         # No secrets or media identifiers in either result or summary.
         print(json.dumps({'report':result,'assessment':summary},sort_keys=True,indent=2))
