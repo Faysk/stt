@@ -7,7 +7,8 @@
 [CmdletBinding()]
 param(
     [switch]$Apply,
-    [switch]$QueueDrained
+    [switch]$QueueDrained,
+    [switch]$WindowsCoordinatorConfirmed
 )
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
@@ -139,6 +140,71 @@ try {
     }
     if (-not $QueueDrained) {
         throw 'QUEUE_NOT_CONFIRMED: operator must verify no queued/running jobs, then pass -QueueDrained'
+    }
+
+    # After the 2026-11-01 S7 cutover, the old Windows 8765 coordinator has
+    # stale data. Never start it accidentally as a second authoritative API.
+    # Refuse Apply unless the operator explicitly approved a future reversal
+    # AND the Windows checkout explicitly owns the coordinator role.
+    if (-not $WindowsCoordinatorConfirmed) {
+        throw 'S7_COORDINATOR_GUARD: legacy Windows API publisher is disabled for normal STT operation. Use docs/QUOTA_1027_RELEASE.md for S7 and Cloudflare assets.'
+    }
+    $hostApiFlags = @(
+        foreach ($line in [System.IO.File]::ReadAllLines((Join-Path $root '.env'))) {
+            if ($line -match '^\s*STT_HOST_API\s*=\s*(.+?)\s*
+    Invoke-Native 'git' @('pull','--ff-only','origin','main')
+    $sha = (& git rev-parse HEAD | Out-String).Trim()
+    if ($LASTEXITCODE -ne 0) { throw 'GIT_SHA_FAILED' }
+    Write-Host "Release checkout: $sha"
+    Write-Host 'Checking existing Node dependencies against package-lock.json (read only)...'
+    # npm ci unlinks all installed packages and fails on Windows when Wrangler
+    # keeps esbuild.exe in use. Provision dependencies separately if mismatched.
+    Invoke-Native 'node' @('scripts/verify-node-deps.mjs')
+    Write-Host 'Reusing verified Node dependencies; npm ci skipped.'
+
+    Write-Host 'Running local Python and Node regressions...'
+    Invoke-Native $python @('-m','pytest','-q')
+    Invoke-Native 'npm' @('run','check')
+    Invoke-Native 'node' @('tests/i18n.test.cjs')
+    Invoke-Native 'node' @('tests/edge.test.cjs')
+    Invoke-Native 'node' @('tests/deploy_guard.test.cjs')
+    Write-Host 'Cloudflare Worker dry-run (no deployment)...'
+    Invoke-Native 'npm' @('run','deploy:stt:dry-run')
+
+    Test-SttHttp 'before-restart'
+    Write-Host 'Stopping application API/worker only; preserving the existing Cloudflare Tunnel...'
+    & (Join-Path $root 'scripts\stop.ps1') -PreserveTunnel
+    Write-Host 'Waiting for the old API listener to release port 8765...'
+    Wait-SttPortReleased -Port 8765 -TimeoutSeconds 45
+    Write-Host 'Starting API and worker from this checkout; the existing Tunnel remains untouched...'
+    & (Join-Path $root 'scripts\start.ps1') -SkipTunnel
+    Test-SttHttp 'after-restart' 6
+
+    Write-Host 'Publishing only the approved Cloudflare Worker faysk-stt...'
+    $env:STT_APPROVED_CUTOVER = 'stt.faysk.dev'
+    $env:STT_APPROVED_WORKER = 'faysk-stt'
+    Invoke-Native 'npm' @('run','deploy')
+    Test-SttHttp 'after-worker-deploy' 6
+
+    $adminAsset = HttpCode 'https://stt.faysk.dev/admin-enhancements.js'
+    if ($adminAsset -ne 200) {
+        throw "ADMIN_ASSET_MISSING: admin-enhancements.js HTTP $adminAsset"
+    }
+    Write-Host "Admin enhancement asset: HTTP $adminAsset OK"
+    Write-Host "STT_RELEASE_PUBLISHED: $sha"
+    Write-Host 'Next: operator must test a new transcription, download, model preload and GPU/CPU; this script does NOT certify them.'
+}
+finally {
+    [Environment]::SetEnvironmentVariable('STT_APPROVED_CUTOVER', $originalCutover, 'Process')
+    [Environment]::SetEnvironmentVariable('STT_APPROVED_WORKER', $originalWorker, 'Process')
+}
+) {
+                $Matches[1].Trim().Trim('"').Trim("'")
+            }
+        }
+    )
+    if ($hostApiFlags.Count -ne 1 -or $hostApiFlags[0] -cne '1') {
+        throw 'WINDOWS_COORDINATOR_NOT_AUTHORIZED: STT_HOST_API=1 must be explicitly configured and a migration to Windows independently approved.'
     }
 
     Write-Host 'Updating main (fast-forward only)...'
