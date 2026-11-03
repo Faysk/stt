@@ -82,7 +82,7 @@ def test_readonly_probe_discloses_no_keys_and_uses_read_only_sqlite():
 def test_real_remote_outbox_function_detects_partial_files_and_missing_directory(tmp_path):
     # Execute only the read-only remote function definitions against a temporary
     # HOME; do not run SSH, socket checks, API calls, or the final print block.
-    functions = module.REMOTE.split("\\nresult = {", 1)[0]
+    functions = module.REMOTE.split("\nresult = {", 1)[0]
     assert "def outbox_count():" in functions
     context = {}
     exec(functions, context)
@@ -98,8 +98,10 @@ def test_real_remote_outbox_function_detects_partial_files_and_missing_directory
     assert check() == 2, "An interrupted atomic write must block a reload"
     (primary / "result-unknown").write_text("unknown", encoding="utf-8")
     assert check() == 3, "Unknown result artifacts must not be silently ignored"
-    (primary / "result-job3").symlink_to(primary / "result-unknown")
-    assert check() is None, "Symlink artifact must fail closed"
+    import os
+    if os.name != "nt":
+        (primary / "result-job3").symlink_to(primary / "result-unknown")
+        assert check() is None, "Symlink artifact must fail closed"
 
 
 def test_after_phase_requires_current_worker_workspace():
