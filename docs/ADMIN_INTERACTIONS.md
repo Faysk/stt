@@ -30,3 +30,14 @@
 ## Pendências
 
 Progresso em bytes/percentual, cancelamento de preload, quota mínima de disco, validação de VRAM por processo em Windows e ensaios físicos na RTX 4070 permanecem a comprovar. **Não declarar o painel homologado nem fazer deploy automático só porque o PR foi integrado.**
+
+
+## Política de atualização proposta — STT #100 (03/11/2026)
+
+**Pendente de publicação/medição**: o cliente público reduz o refresh em idle para **30 s** (2 chamadas por ciclo: health + lista do próprio usuário) e mantém **5 s** se houver job `queued/running/uploading` na sessão. O admin reduz para **30 s** quando não houver trabalhos ativos e preserva **10 s** durante trabalho ativo; histórico e métricas de clientes ficam limitados a **1 atualização/min** sem mudança manual de período. Abas ocultas suspendem consultas e sincronizam ao voltar a ficar visíveis.
+
+Falhas sucessivas do HTTP fazem backoff até 120 s em vez de requisições agressivas. O painel admin reconhece HTML da página Cloudflare `Error 1027` e apresenta mensagem específica, sem encerrar a sessão por falso 401. Na UI pública, erros continuam informando indisponibilidade sem inventar estado de execução da GPU. Os dados da biblioteca já carregados não são apagados por falha de polling.
+
+**Testes/aceite ainda necessários:** fake timer/DOM em browsers reais, upload/console longos, duas abas, i18n, logout e retoma, diagnóstico de tráfego antes/depois por invocações Worker (não downloads de assets). Revisar latência percebida quando novos jobs forem criados noutras abas e garantir refresh imediato após ações do usuário. A referência de segurança/quotas é [IaC #64](https://github.com/Faysk/iac/issues/64), incidente [STT #97](https://github.com/Faysk/stt/issues/97).
+
+Nenhuma mudança de Cloudflare, Tunnel, DB, Worker de inferência ou sessão autorizada decorre deste PR; rollback é publicar a revisão frontend anterior sob procedimento de release supervisionado.
