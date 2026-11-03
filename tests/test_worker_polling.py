@@ -6,7 +6,7 @@ from unittest.mock import patch
 def test_s7_polling_backoff_and_limits(monkeypatch):
     from s7 import worker as s7
     assert s7.SLEEP_SECONDS >= 20
-    assert 8 <= s7.retry_seconds(1) <= 13
+    assert 18 <= s7.retry_seconds(1) <= 23
     assert 100 <= s7.retry_seconds(10) <= 140
     monkeypatch.setenv("STT_S7_IDLE_SECONDS","0")
     assert s7.idle_seconds()==5
@@ -17,6 +17,7 @@ def test_s7_polling_backoff_and_limits(monkeypatch):
 
 
 def test_remote_worker_idle_polling_and_bounded_retries(monkeypatch):
+    monkeypatch.setenv("STT_WORKER_KEY","test-scoped-secret")
     with patch("dotenv.load_dotenv",lambda *args,**kwargs:None):
         from server import worker as win
         importlib.reload(win)
