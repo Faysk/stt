@@ -11,7 +11,7 @@ function bytes(n){return n>=1024**3?(n/1024**3).toFixed(2)+' GB':(n/1024**2).toF
 function tag(n,prefix='S'){return n?`${prefix}-${n.slice(0,10)}`:'Anterior à coleta'}
 function badge(status){return node('span',states[status]||status,`badge state-${status}`)}
 function button(text,fn,cls='button subtle'){const b=node('button',text,cls);b.type='button';b.onclick=fn;return b}
-function lockAdmin(){key='';sessionMode=false;sessionCsrf='';loaded=false;dirty=false;detailId=null;lastRows=[];lastHistory=null;lastUsage=null;$('job-detail').close();$('detail-content').replaceChildren();$('dashboard').hidden=true;$('dashboard').querySelectorAll('tbody,.chart').forEach(e=>e.replaceChildren());for(const id of ['queue-jobs','metrics','host-metrics','versions','model-catalog','workers'])$(id).replaceChildren();$('admin-login').hidden=false;$('admin-navigation').hidden=true;$('admin-toolbar').hidden=true;document.body.classList.add('admin-locked');$('logout').hidden=true;$('connection').textContent='Não conectado';$('updated').textContent='Sessão encerrada';$('admin-message').textContent='';window.dispatchEvent(new Event('stt:locked'))}
+function lockAdmin(){clearTimeout(adminRefreshTimer);adminRefreshTimer=null;lastPeriodLoad=0;activeJobs=false;failedAdminRefreshes=0;key='';sessionMode=false;sessionCsrf='';loaded=false;dirty=false;detailId=null;lastRows=[];lastHistory=null;lastUsage=null;$('job-detail').close();$('detail-content').replaceChildren();$('dashboard').hidden=true;$('dashboard').querySelectorAll('tbody,.chart').forEach(e=>e.replaceChildren());for(const id of ['queue-jobs','metrics','host-metrics','versions','model-catalog','workers'])$(id).replaceChildren();$('admin-login').hidden=false;$('admin-navigation').hidden=true;$('admin-toolbar').hidden=true;document.body.classList.add('admin-locked');$('logout').hidden=true;$('connection').textContent='Não conectado';$('updated').textContent='Sessão encerrada';$('admin-message').textContent='';window.dispatchEvent(new Event('stt:locked'))}
 async function api(path,options={}){const r=await fetch(path,{...options,credentials:'same-origin',headers:{...(key?{'x-admin-key':key}:{}),...(sessionMode?{'x-csrf-token':sessionCsrf,'x-stt-auth':'1'}:{}),'content-type':'application/json',...options.headers}});if(!r.ok){if(r.status===401)lockAdmin();let detail;try{const type=r.headers.get('content-type')||'';if(type.includes('text/html')){const page=(await r.text()).slice(0,8192);if(page.includes('Error 1027'))detail='Cloudflare atingiu o limite de requisições. Aguarde a recuperação.'}else detail=(await r.json()).detail}catch{}throw Error(r.status===401?'Chave inválida ou sessão encerrada.':typeof detail==='string'?detail:'Falha ao acessar o painel.')}return r.json()}
 function precision(){const values=$('device').value==='cuda'?['float16','int8_float16']:['int8','float32'];$('compute').replaceChildren(...values.map(v=>{const o=node('option',v);o.value=v;return o}))}
 $('device').onchange=()=>{precision();dirty=true};$('settings-form').oninput=()=>{dirty=true;$('settings-message').textContent='Alterações ainda não salvas.'};
@@ -54,9 +54,12 @@ function adminRefreshDelay(){
 }
 function scheduleAdminRefresh(){
  clearTimeout(adminRefreshTimer);
+ adminRefreshTimer=null;
+ if((!key&&!sessionMode)||document.hidden)return;
  adminRefreshTimer=setTimeout(async()=>{
-  if((key||sessionMode)&&!document.hidden)await refresh();
-  scheduleAdminRefresh();
+  adminRefreshTimer=null;
+  await refresh();
+  if(adminRefreshTimer===null&&(key||sessionMode)&&!document.hidden)scheduleAdminRefresh();
  },adminRefreshDelay());
 }
 document.addEventListener('visibilitychange',()=>{
@@ -66,4 +69,4 @@ document.addEventListener('visibilitychange',()=>{
 });
 scheduleAdminRefresh();
 
-window.STTAdmin={async signIn(csrf){key='';sessionMode=true;sessionCsrf=csrf;loaded=false;await refresh()},isAuthenticated(){return Boolean(key||sessionMode)}};
+window.STTAdmin={async signIn(csrf){key='';sessionMode=true;sessionCsrf=csrf;loaded=false;lastPeriodLoad=0;failedAdminRefreshes=0;activeJobs=false;await refresh()},isAuthenticated(){return Boolean(key||sessionMode)}};
