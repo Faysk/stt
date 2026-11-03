@@ -48,3 +48,12 @@ Nenhuma mudança de Cloudflare, Tunnel, DB, Worker de inferência ou sessão aut
 O scheduler público mantém **um único timer futuro** e cancela atualizações ao ocultar a aba; ao voltar a ficar visível, atualiza imediatamente. No admin, o timer **não é mantido** quando não há sessão autenticada ou a página fica oculta. Logout invalida o timer, reseta `lastPeriodLoad`/estado de erro/atividade e limpa dados administrativos anteriores. Um login posterior deve buscar histórico/clientes na primeira atualização, mesmo que a sessão anterior tenha carregado esses dados há menos de 60 segundos.
 
 Os testes de fake timers em `tests/polling_scheduler_lifecycle.test.cjs` garantem ausência de timers duplicados e suspensão sem network enquanto oculto/desconectado. Ainda é necessário testar no browser real (várias abas, sessão Passkey/QR, tempo de espera e estados 1027). Nenhum deploy no Worker Cloudflare ocorre por commit Git.
+
+
+## Isolamento de respostas administrativas por sessão (STT #100)
+
+Toda requisição do painel passa a guardar a geração da autenticação (`authEpoch`) em que iniciou. Se um logout, login por chave ou entrada por QR/Passkey ocorrer antes da resposta, ela é descartada **antes de ser usada para renderizar dados**. Um `401` atrasado de uma sessão anterior também não pode invalidar a nova sessão. Histórico, clientes e lista de jobs verificam a geração antes de substituir o DOM; respostas antigas são ignoradas, sem mensagens de erro para o utilizador atual.
+
+A proteção da atualização principal usa `refreshingEpoch` em vez de um booleano partilhado: um refresh ainda pendente na sessão antiga não impede a sessão nova de buscar seus dados, e a finalização tardia da sessão antiga não cancela o temporizador novo. Testes de concorrência com `fetch` e `r.json()` atrasados estão em `tests/admin_session_race.test.cjs`; a CI executa esse teste sem credenciais ou rede externa.
+
+**Pendente:** validação real no navegador com QR/Passkey e perda temporária de rede; nenhum merge equivale a deploy de assets Cloudflare.
