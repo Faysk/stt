@@ -9,7 +9,7 @@ if(!validSession(key)){key=Array.from(crypto.getRandomValues(new Uint8Array(32))
 let mode='file',selected=null,busy=false,polling=false,jobs=[],health=null,failedRefreshes=0,refreshTimer=null,filter='all',renderSignature='',currentTranscript='',readerData=null,readerMode='timeline';
 function message(text,error=false){$('message').textContent=text;$('message').classList.toggle('error',error)}
 function failure(status,detail=''){if(status===413)return health?.limited?limitedLabel():t('large');if(status===429)return detail.includes('cheia')?t('full'):t('rate');if(status>=500)return t('unavailable');if(status===400||status===422)return t(mode==='link'?'invalid':'error');return t('error')}
-async function api(path,options={}){const r=await fetch(path,{...options,headers:{'x-session-key':key,'x-ui-language':locale,...options.headers}});if(!r.ok){const data=await r.json().catch(()=>({}));throw Error(failure(r.status,data.detail))}return r}
+async function api(path,options={}){const r=await fetch(path,{...options,headers:{'x-session-key':key,'x-ui-language':locale,...options.headers}});if(!r.ok){if((r.headers?.get('content-type')||'').includes('text/html')){const page=(await r.text()).slice(0,8192);throw Error(page.includes('Error 1027')?t('quota'):t('unavailable'))}const data=await r.json().catch(()=>({}));throw Error(failure(r.status,data.detail))}return r}
 function tab(next){mode=next;for(const m of ['file','link']){$(m+'-tab').classList.toggle('active',m===next);$(m+'-tab').setAttribute('aria-selected',String(m===next));$(m+'-panel').hidden=m!==next}message('')}
 $('file-tab').onclick=()=>tab('file');$('link-tab').onclick=()=>tab('link');
 for(const m of ['file','link'])$(m+'-tab').onkeydown=e=>{if(['ArrowLeft','ArrowRight'].includes(e.key)){e.preventDefault();const next=m==='file'?'link':'file';tab(next);$(next+'-tab').focus()}};
@@ -227,13 +227,13 @@ async function refresh(){
  if(polling)return;polling=true;
  try{
   const [h,list]=await Promise.all([
-   fetch('/api/health').then(r=>{if(!r.ok)throw Error();return r.json()}),
+   fetch('/api/health').then(async r=>{if(!r.ok){if((r.headers?.get('content-type')||'').includes('text/html')){const page=(await r.text()).slice(0,8192);if(page.includes('Error 1027'))throw Error(t('quota'))}throw Error(t('unavailable'))}return r.json()}),
    api('/api/jobs').then(r=>r.json())
   ]);
   health=h;jobs=list;failedRefreshes=0;showHealth();render();
- }catch{
+ }catch(error){
   failedRefreshes=Math.min(6,failedRefreshes+1);
-  $('health').dataset.pressure='offline';$('health-text').textContent=t('unavailable');
+  $('health').dataset.pressure='offline';$('health-text').textContent=error.message===t('quota')?t('quota'):t('unavailable');
   const container=$('jobs');
   if(container.getAttribute('aria-busy')==='true'){
    const empty=el('div','empty');
