@@ -18,6 +18,7 @@ from dotenv import load_dotenv
 from server.observability import package_versions
 from server.config import getenv, required
 from server import workspace
+import random
 from server.result_contract import result_receipt
 from server.video_download import VideoDownloadError
 
@@ -454,35 +455,54 @@ def prepare_model(op):
     except httpx.HTTPError as exc:
         print('Preload report failed: '+type(exc).__name__,flush=True)
 
+def poll_interval(name, default):
+    """Bound operator overrides to avoid both hot loops and unbounded stale state."""
+    try:
+        seconds = float(getenv(name,str(default)))
+        if not (seconds == seconds and seconds != float('inf')):
+            raise ValueError('invalid interval')
+        return max(5.,min(60.,seconds))
+    except (TypeError,ValueError):
+        return float(default)
+
+
+def failure_delay(failures):
+    return min(120.,10. * (2 ** min(failures,4))) * random.uniform(.9,1.1)
+
+
 def main():
     print(f'Executor {IDENTITY} conectado a {BASE}',flush=True)
     preload_proc=None
     preload_path=None
+    failure_streak=0
+    idle_interval=poll_interval('STT_WORKER_IDLE_SECONDS',20)
+    disabled_interval=poll_interval('STT_WORKER_DISABLED_SECONDS',30)
     try:
         while True:
             try:
                 control=client.post('/api/worker/control',json={'id':IDENTITY})
                 control.raise_for_status()
                 enabled=control.json().get('enabled') is True
+                failure_streak=0
                 if not enabled:
                     _stop_child(preload_proc)
                     preload_proc=None
                     if preload_path:preload_path.unlink(missing_ok=True);preload_path=None
                     client.post('/api/worker/control',json={'id':IDENTITY,'applied_enabled':False}).raise_for_status()
                     _drain_outbox()  # Keep durable results; no new model/claim.
-                    time.sleep(5)
+                    time.sleep(disabled_interval)
                     continue
                 try:
                     workspace.preflight(getenv('STT_TMP') or str(ROOT/'worker-tmp'),OUTBOX)
                 except OSError:
                     client.post('/api/worker/control',json={'id':IDENTITY,'applied_enabled':True,
                         'ready':False,'reason':'WORKSPACE_UNAVAILABLE'}).raise_for_status()
-                    time.sleep(10)
+                    time.sleep(disabled_interval)
                     continue
                 client.post('/api/worker/control',json={'id':IDENTITY,'applied_enabled':True,
                     'ready':True,'reason':None}).raise_for_status()
                 if _drain_outbox():
-                    time.sleep(5)
+                    time.sleep(idle_interval)
                     continue
                 r=client.post('/api/worker/claim',json={'id':IDENTITY,'info':worker_capabilities()})
                 r.raise_for_status()
@@ -503,10 +523,12 @@ def main():
                             with os.fdopen(descriptor,'w',encoding='utf-8') as stream:json.dump(operation,stream)
                             flags={'creationflags':subprocess.CREATE_NEW_PROCESS_GROUP|subprocess.CREATE_NO_WINDOW} if os.name=='nt' else {'start_new_session':True}
                             preload_proc=subprocess.Popen([sys.executable,'-m','server.preload',str(preload_path)],cwd=ROOT,**flags)
-                    time.sleep(5)
+                    time.sleep(idle_interval * random.uniform(.9,1.1))
             except (httpx.HTTPError,ValueError,OSError) as error:
-                print('Conexão: '+type(error).__name__+'; nova tentativa em 10s',flush=True)
-                time.sleep(10)
+                failure_streak+=1
+                delay=failure_delay(failure_streak)
+                print('Conexão: '+type(error).__name__+'; nova tentativa com backoff',flush=True)
+                time.sleep(delay)
     finally:
         _stop_child(preload_proc)
         if preload_path:preload_path.unlink(missing_ok=True)
