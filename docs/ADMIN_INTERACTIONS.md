@@ -48,3 +48,10 @@ Nenhuma mudança de Cloudflare, Tunnel, DB, Worker de inferência ou sessão aut
 O scheduler público mantém **um único timer futuro** e cancela atualizações ao ocultar a aba; ao voltar a ficar visível, atualiza imediatamente. No admin, o timer **não é mantido** quando não há sessão autenticada ou a página fica oculta. Logout invalida o timer, reseta `lastPeriodLoad`/estado de erro/atividade e limpa dados administrativos anteriores. Um login posterior deve buscar histórico/clientes na primeira atualização, mesmo que a sessão anterior tenha carregado esses dados há menos de 60 segundos.
 
 Os testes de fake timers em `tests/polling_scheduler_lifecycle.test.cjs` garantem ausência de timers duplicados e suspensão sem network enquanto oculto/desconectado. Ainda é necessário testar no browser real (várias abas, sessão Passkey/QR, tempo de espera e estados 1027). Nenhum deploy no Worker Cloudflare ocorre por commit Git.
+
+
+## Segurança de respostas atrasadas entre sessões admin (#100)
+
+O painel usa `adminGeneration` incremental: logout, entrada manual e autenticação por QR/Passkey invalidam todas as requisições iniciadas na sessão anterior. Um HTTP 401 atrasado **não pode desautenticar o novo login**; um JSON/histórico retornado pela sessão antiga é descartado antes de renderizar. A lista de jobs e o histórico conferem a geração da sessão após o `await`, e o polling não altera contadores/estado de carregamento de uma sessão nova a partir de uma requisição da antiga.
+
+Testes VM assíncronos em `tests/admin_session_epoch.test.cjs` validam 401 antigo, JSON antigo e 401 legítimo na sessão corrente. Não implica que a aplicação foi publicada; ainda são necessários E2E de logout/login e múltiplas abas em navegador real e medição de quota.
