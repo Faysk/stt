@@ -14,7 +14,13 @@ function button(text,fn,cls='button subtle'){const b=node('button',text,cls);b.t
 function lockAdmin(){authEpoch++;historyRequestId++;clearTimeout(adminRefreshTimer);adminRefreshTimer=null;lastPeriodLoad=0;activeJobs=false;failedAdminRefreshes=0;key='';sessionMode=false;sessionCsrf='';loaded=false;dirty=false;detailId=null;lastRows=[];lastHistory=null;lastUsage=null;$('job-detail').close();$('detail-content').replaceChildren();$('dashboard').hidden=true;$('dashboard').querySelectorAll('tbody,.chart').forEach(e=>e.replaceChildren());for(const id of ['queue-jobs','metrics','host-metrics','versions','model-catalog','workers'])$(id).replaceChildren();$('admin-login').hidden=false;$('admin-navigation').hidden=true;$('admin-toolbar').hidden=true;document.body.classList.add('admin-locked');$('logout').hidden=true;$('connection').textContent='Não conectado';$('updated').textContent='Sessão encerrada';$('admin-message').textContent='';window.dispatchEvent(new Event('stt:locked'))}
 async function api(path,options={}){
  const epoch=authEpoch;
- const r=await fetch(path,{...options,credentials:'same-origin',headers:{...(key?{'x-admin-key':key}:{}),...(sessionMode?{'x-csrf-token':sessionCsrf,'x-stt-auth':'1'}:{}),'content-type':'application/json',...options.headers}});
+ let r;
+ try{
+  r=await fetch(path,{...options,credentials:'same-origin',headers:{...(key?{'x-admin-key':key}:{}),...(sessionMode?{'x-csrf-token':sessionCsrf,'x-stt-auth':'1'}:{}),'content-type':'application/json',...options.headers}});
+ }catch(error){
+  if(epoch!==authEpoch)throw Error('ADMIN_SESSION_CHANGED');
+  throw error;
+ }
  if(epoch!==authEpoch)throw Error('ADMIN_SESSION_CHANGED');
  if(!r.ok){
   if(r.status===401)lockAdmin();
@@ -29,7 +35,12 @@ async function api(path,options={}){
   if(epoch!==authEpoch&&r.status!==401)throw Error('ADMIN_SESSION_CHANGED');
   throw Error(r.status===401?'Chave inválida ou sessão encerrada.':typeof detail==='string'?detail:'Falha ao acessar o painel.');
  }
- const data=await r.json();
+ let data;
+ try{data=await r.json();}
+ catch(error){
+  if(epoch!==authEpoch)throw Error('ADMIN_SESSION_CHANGED');
+  throw error;
+ }
  if(epoch!==authEpoch)throw Error('ADMIN_SESSION_CHANGED');
  return data;
 }
