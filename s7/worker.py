@@ -59,7 +59,7 @@ def local_edge_key():
                 secret = json.loads(line.partition("=")[2])
             except (ValueError,TypeError):
                 break
-            if isinstance(secret,str) and len(secret) >= 32 and not any(c in secret for c in "\\r\\n\\x00"):
+            if isinstance(secret,str) and len(secret) >= 32 and not any(c in secret for c in "\r\n\x00"):
                 return secret
             break
     raise WorkerError("Local API edge authentication unavailable")
