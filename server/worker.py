@@ -483,13 +483,13 @@ def main():
                 control=client.post('/api/worker/control',json={'id':IDENTITY})
                 control.raise_for_status()
                 enabled=control.json().get('enabled') is True
-                failure_streak=0
                 if not enabled:
                     _stop_child(preload_proc)
                     preload_proc=None
                     if preload_path:preload_path.unlink(missing_ok=True);preload_path=None
                     client.post('/api/worker/control',json={'id':IDENTITY,'applied_enabled':False}).raise_for_status()
                     _drain_outbox()  # Keep durable results; no new model/claim.
+                    failure_streak=0
                     time.sleep(disabled_interval)
                     continue
                 try:
@@ -502,6 +502,7 @@ def main():
                 client.post('/api/worker/control',json={'id':IDENTITY,'applied_enabled':True,
                     'ready':True,'reason':None}).raise_for_status()
                 if _drain_outbox():
+                    failure_streak=0
                     time.sleep(idle_interval)
                     continue
                 r=client.post('/api/worker/claim',json={'id':IDENTITY,'info':worker_capabilities()})
@@ -509,6 +510,7 @@ def main():
                 job=r.json()['job']
                 if job:
                     execute(job)
+                    failure_streak=0
                 else:
                     if preload_proc is None or preload_proc.poll() is not None:
                         if preload_path:preload_path.unlink(missing_ok=True);preload_path=None
@@ -523,6 +525,7 @@ def main():
                             with os.fdopen(descriptor,'w',encoding='utf-8') as stream:json.dump(operation,stream)
                             flags={'creationflags':subprocess.CREATE_NEW_PROCESS_GROUP|subprocess.CREATE_NO_WINDOW} if os.name=='nt' else {'start_new_session':True}
                             preload_proc=subprocess.Popen([sys.executable,'-m','server.preload',str(preload_path)],cwd=ROOT,**flags)
+                    failure_streak=0
                     time.sleep(idle_interval * random.uniform(.9,1.1))
             except (httpx.HTTPError,ValueError,OSError) as error:
                 failure_streak+=1
