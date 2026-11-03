@@ -5,6 +5,7 @@ Single job at a time. Never touches the S7 Observatory or its SQLite databases.
 """
 import hashlib
 import json
+import random
 import os
 from pathlib import Path
 import re
@@ -30,7 +31,7 @@ ID = "s7-edge"
 CLIENT_USER_AGENT = "Mozilla/5.0"
 MAX_BYTES = 8 * 1024 * 1024
 MAX_SECONDS = 300
-SLEEP_SECONDS = 5
+SLEEP_SECONDS = 20
 LOCAL_API = "http://127.0.0.1:8786"
 MIN_INTERNAL_FREE = 2 * 1024**3
 WORKSPACE_BUDGET = 64 * 1024**2
@@ -426,24 +427,41 @@ def run_job(cfg,job):
                   timing="segments")
     return spool(cfg,job,result)
 
+def idle_seconds():
+    try:
+        value=float(os.environ.get("STT_S7_IDLE_SECONDS","20"))
+        if not (value == value and value != float("inf")):raise ValueError("invalid")
+        return max(5.,min(60.,value))
+    except (TypeError,ValueError):return 20.
+
+
+def retry_seconds(failures):
+    return min(120.,10. * 2**min(failures,4)) * random.uniform(.9,1.1)
+
+
 def main():
     cfg=config_from_environment()
     print("S7 worker ready (scoped authenticated origin; compatible jobs only)",flush=True)
     storage_blocked=False
+    errors=0
+    idle=idle_seconds()
     while True:
         try:
             code,control=json_post(cfg,'/api/worker/control',{'id':ID},timeout=20)
             if code!=200 or not isinstance(control,dict):
-                time.sleep(5)
+                errors+=1
+                time.sleep(retry_seconds(errors))
                 continue
             enabled=control.get('enabled') is True
             json_post(cfg,'/api/worker/control',{'id':ID,'applied_enabled':enabled},timeout=20)
             if not enabled:
                 drain(cfg)
-                time.sleep(5)
+                errors=0
+                time.sleep(idle)
                 continue
         except (OSError,URLError,TimeoutError,ValueError):
-            time.sleep(5)
+            errors+=1
+            time.sleep(retry_seconds(errors))
             continue
         try:
             ensure_storage(cfg, reserve=JOB_RESERVE)
@@ -465,24 +483,27 @@ def main():
             time.sleep(5)
             continue
         if status=='pending':
-            time.sleep(SLEEP_SECONDS)
+            time.sleep(idle * random.uniform(.9,1.1))
             continue
         caps=capabilities(cfg)
         try:
             code,reply=json_post(cfg,"/api/worker/claim",{"id":ID,"info":caps},timeout=20)
             if code in (401,403): raise WorkerError("Worker authentication denied")
             if code!=200 or not isinstance(reply,dict):
-                time.sleep(10)
+                errors+=1
+                time.sleep(retry_seconds(errors))
                 continue
+            errors=0
             job=reply.get("job")
             if not job:
-                time.sleep(SLEEP_SECONDS)
+                time.sleep(idle * random.uniform(.9,1.1))
                 continue
             result_path=run_job(cfg,job)
             if result_path: deliver(cfg,result_path)
         except (OSError,URLError,TimeoutError,ValueError) as exc:
             print("Worker transport: "+type(exc).__name__,flush=True)
-            time.sleep(10)
+            errors+=1
+            time.sleep(retry_seconds(errors))
 
 if __name__=="__main__":
     try: main()
