@@ -13,6 +13,23 @@ HOSTNAME = 'stt-origin.faysk.dev'
 NAME = 'faysk-stt'
 
 
+class NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, *args, **kwargs):
+        return None
+
+
+def open_checked(request, timeout):
+    """Provider API and local S7 gate only; reject redirects and foreign origins."""
+    parsed = urllib.parse.urlsplit(request.full_url)
+    provider = (parsed.scheme == 'https' and parsed.hostname == 'api.cloudflare.com'
+                and parsed.port is None and parsed.path.startswith('/client/v4/'))
+    local = (parsed.scheme == 'http' and parsed.hostname == '127.0.0.1'
+             and parsed.port == 8786 and parsed.path == '/api/health')
+    if not (provider or local) or parsed.username or parsed.password or parsed.fragment:
+        raise ValueError('UNTRUSTED_TUNNEL_PROVISION_ENDPOINT')
+    return urllib.request.build_opener(NoRedirect()).open(request, timeout=timeout)
+
+
 def main(apply=False, cutover=False, maintenance=False):
     candidates = [Path(os.environ['APPDATA'])/'xdg.config/.wrangler/config/default.toml',
                   Path.home()/'.wrangler/config/default.toml']
@@ -26,7 +43,7 @@ def main(apply=False, cutover=False, maintenance=False):
         request = urllib.request.Request('https://api.cloudflare.com/client/v4'+path,
             headers={'Authorization':'Bearer '+token,'Content-Type':'application/json'},
             method=method,data=None if value is None else json.dumps(value).encode())
-        with urllib.request.urlopen(request,timeout=30) as response:
+        with open_checked(request,timeout=30) as response:
             result = json.load(response)
         if not result.get('success'):
             raise SystemExit('CLOUDFLARE_API_REQUEST_FAILED')
@@ -60,7 +77,7 @@ def main(apply=False, cutover=False, maintenance=False):
         from dotenv import dotenv_values
         secret=dotenv_values(ROOT/'.env')['STT_EDGE_KEY']
         request=urllib.request.Request('http://127.0.0.1:8786/api/health',headers={'x-edge-key':secret})
-        with urllib.request.urlopen(request,timeout=15) as response:
+        with open_checked(request,timeout=15) as response:
             health=json.load(response)
         if health.get('max_mb')!=8 or health.get('formats')!=['wav','mp3','ogg','m4a'] or health.get('max_seconds')!=300:
             raise SystemExit('S7_API_HEALTH_GATE_FAILED')
