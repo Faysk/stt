@@ -80,3 +80,30 @@ Esse comando usa Wrangler configurado localmente; **não** publica S7 worker, re
 Se só o **agente S7** falhar após instalação, voltar apenas o arquivo/entrypoint anterior do worker em janela segura e reiniciar esse serviço; preservar API/SQLite/microSD/Tunnel. Se **static assets/Worker Cloudflare** falharem, restaurar o deploy da revisão anterior validada com os mesmos guards de domínio/conta; não desativar `x-edge-key`, nem expor `stt-origin`. Não tentar trocar de volta para o SQLite Windows antigo: isso criaria split brain e poderia perder jobs.
 
 **Estado desta documentação:** somente plano versionado e CI; não registrar como efetivamente publicado sem evidências do operador.
+
+
+## Verificação remota read-only automatizada (STT #97/#98/#99)
+
+`scripts/preflight_s7_1027.py` consulta o S7 via **SSH com host key exigida**. Não usa Cloudflare, não envia segredos nem executa `sv restart`. O script remoto verifica somente: TCP loopback:8786, modo dos ficheiros privados, presença (não o valor) de `STT_EDGE_KEY` e `STT_REQUIRE_EDGE`, estado do supervisor do worker, SQLite **somente leitura** para **contagens agregadas** de jobs, quantidade de outbox, hashes SHA-256 de worker/entrypoint e se o banco fica no microSD. Nunca imprime transcrições, chaves ou IDs de jobs.
+
+```powershell
+cd E:\Projects\stt
+# Confirmar o endereço/IP, utilizador e host key do verdadeiro S7 Edge, não do S23+
+$S7 = "192.168.1.2"  # APENAS exemplo histórico; confirmar antes
+$Identity = Join-Path $HOME ".ssh/s7_lmonitor_ed25519"
+
+# ANTES: aceitar que o código instalado possa diferir da main, sem tocar no serviço
+& .\.venv\Scripts\python.exe scripts/preflight_s7_1027.py --host $S7 --user u0_a279 --identity $Identity --phase before
+
+# DEPOIS de um rollout supervisionado: exigir hashes do worker e runit iguais à main
+& .\.venv\Scripts\python.exe scripts/preflight_s7_1027.py --host $S7 --user u0_a279 --identity $Identity --phase after
+```
+
+- `checks_passed` **não autoriza** restart ou deploy; é um snapshot sem garantia de que a fila não mude após o comando.
+- `version_mismatches` no `before` é **esperado** enquanto o S7 ainda usa código antigo. Na fase `after`, hashes diferentes ou destino ainda público bloqueiam o aceite.
+- `jobs_queued`, `jobs_active` e `outbox_count` diferentes de zero **bloqueiam** uma janela de atualização; dados não disponíveis **também bloqueiam** (nunca interpretar erro de DB como fila vazia).
+- Pode haver tokens em configurações locais de SSH, mas **nada disso deve ser enviado ao chat ou versionado**. O retorno JSON foi projetado para ser apenas estado agregado; confirmar revisão de código antes de executar.
+- Rejeição do SSH/host key → saída de erro sanitizada e código 2; **não** desativar `StrictHostKeyChecking` para contornar.
+- A verificação não prova que a origem externa esteja 403, nem que jobs tenham sido concluídos E2E ou que Cloudflare tenha quota disponível. Esses aceites seguem separadamente no runbook.
+
+**Status:** automatização preparada e testável offline; execução SSH física e release reais pendentes.
