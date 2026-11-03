@@ -125,3 +125,8 @@ Nenhum deploy ocorre por merge. O S7 local continua sem invocações públicas p
 O preflight considera **não drenado** qualquer ficheiro `result-*` (inclusive `result-<job>.json.<sufixo>.tmp` deixado por uma falha na gravação atómica). Se nenhum diretório de trabalho conhecido existir, a contagem será `null` em vez de **zero**; um symlink ou entrada inesperada também invalida a contagem. Após a instalação da nova versão, `primary_workspace_present` deve confirmar `~/.cache/stt-worker`; uma pasta legada isolada não basta para declarar o rollout concluído. A ferramenta nunca apaga nem repara os artefactos — preservar e investigar antes do restart isolado do worker.
 
 Este gate evita que arquivos de resultado incompletos sejam confundidos com uma outbox limpa; não substitui medição de filas ativas ou testes reais.
+
+
+### Verificação real da proteção da API local (sem Cloudflare)
+
+O preflight read-only agora realiza **duas requisições GET exclusivamente ao loopback do S7** (`http://127.0.0.1:8786/api/health`): sem `x-edge-key` deve responder **403**, e com a credencial existente no `.env` privado do próprio S7 deve responder **200**. Não segue redirecionamentos nem utiliza proxies, não imprime a credencial, não transmite nada ao GitHub e não usa o domínio público. O estado é resumido em `origin_no_key_403` e `origin_private_key_200`, ambos obrigatórios para o aceite do preflight `before` e `after`. A confirmação 200 apenas mostra que a proteção e o health local estão funcionais — **não equivale** a uma transcrição E2E nem a quota disponível na Cloudflare. Se houver discrepância, a operação é bloqueada (não desligar `STT_REQUIRE_EDGE` para fazê-la passar).

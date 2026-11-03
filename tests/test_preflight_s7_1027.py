@@ -13,6 +13,7 @@ def good_report():
     return {
         "api_loopback_tcp":True,"api_env_private":True,"scoped_key_private":True,
         "edge_secret_present":True,"require_edge_enabled":True,
+        "origin_no_key_403":True,"origin_private_key_200":True,
         "database_present":True,"on_external_volume":True,
         "queue_checked":True,"jobs_queued":0,"jobs_active":0,"outbox_count":0,
         "primary_workspace_present":True,
@@ -113,3 +114,71 @@ def test_after_phase_requires_current_worker_workspace():
     # Before-phase may be used with legacy worker layouts for diagnostics.
     assessed_before = module.assess(report,"worker-sha","entry-sha","before")
     assert assessed_before["checks_passed"]
+
+
+def test_local_origin_guard_probes_require_403_and_200(tmp_path):
+    # Execute the actual functions from the remote payload without running
+    # its final status collection. The network opener is fully mocked.
+    code = module.REMOTE.split("\nresult = {", 1)[0]
+    context = {}
+    exec(compile(code, "<remote-preflight>", "exec"), context)
+    env = tmp_path / "private.env"
+    edge_key = "r0x" * 20
+    env.write_text('STT_EDGE_KEY=' + __import__("json").dumps(edge_key) + "\n", encoding="utf-8")
+    context["api"] = env
+    context["private"] = lambda path: path == env
+    seen = []
+    from urllib.error import HTTPError
+
+    class Response:
+        status = 200
+        def __enter__(self):
+            return self
+        def __exit__(self, *args):
+            return False
+
+    class FakeOpener:
+        def open(self, request, timeout):
+            seen.append((request.full_url, request.get_header("X-edge-key")))
+            assert request.full_url == "http://127.0.0.1:8786/api/health"
+            assert timeout <= 3
+            if request.get_header("X-edge-key") is None:
+                raise HTTPError(request.full_url, 403, "unauthorized", {}, None)
+            assert request.get_header("X-edge-key") == edge_key
+            return Response()
+
+    context["build_opener"] = lambda *handlers: FakeOpener()
+    checks = context["origin_guard_http"]()
+    assert checks == {"origin_no_key_403": True, "origin_private_key_200": True}
+    assert seen == [
+        ("http://127.0.0.1:8786/api/health", None),
+        ("http://127.0.0.1:8786/api/health", edge_key),
+    ]
+    assert edge_key not in str(checks), "No private Edge key in diagnostic output"
+
+
+def test_auth_probe_fails_closed_on_bad_origin(tmp_path):
+    code = module.REMOTE.split("\nresult = {", 1)[0]
+    context = {}
+    exec(compile(code, "<remote-preflight>", "exec"), context)
+    env = tmp_path / "private.env"
+    env.write_text('STT_EDGE_KEY=' + __import__("json").dumps("x" * 64), encoding="utf-8")
+    context["api"] = env
+    context["private"] = lambda path: True
+    class FakeOpener:
+        def open(self, request, timeout):
+            from urllib.error import HTTPError
+            raise HTTPError(request.full_url, 503, "unavailable", {}, None)
+    context["build_opener"] = lambda *handlers: FakeOpener()
+    assert context["origin_guard_http"]() == {
+        "origin_no_key_403": False, "origin_private_key_200": False
+    }
+
+
+def test_origin_missing_protection_blocks_preflight_even_with_empty_queue():
+    report = good_report()
+    report["origin_no_key_403"] = False
+    report["origin_private_key_200"] = True
+    state = module.assess(report, "worker-sha", "entry-sha", "after")
+    assert not state["checks_passed"]
+    assert "origin_no_key_403" in state["blockers"]
