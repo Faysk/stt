@@ -71,3 +71,20 @@ TXT, Markdown, SRT e JSON do áudio de referência foram baixados pela sessão p
 Não foi realizado desligamento físico do notebook neste ensaio. A independência está implantada na arquitetura e o conector próprio do S7 está ativo; o teste físico de reboot continua pendente.
 
 Depois que o S7 recebe novos trabalhos, não se deve apontar o site de volta para a cópia Windows antiga: ela não recebe os novos dados. Qualquer retorno de coordenador exige migração consistente própria, com admissão suspensa.
+
+
+## Proposta de mitigação da quota 1027 — PR de STT #98 (03/11/2026)
+
+**Código ainda não implantado no S7.** O agente `s7/worker.py` e a configuração runit passam a direcionar chamadas internas para `http://127.0.0.1:8786` (API autoritativa no **mesmo aparelho**) em vez de percorrer o Worker Cloudflare. O middleware FastAPI **continua exigindo `x-edge-key`**, e endpoints de worker seguem exigindo `x-worker-key` escopada. Não há bypass de origem nem segundo banco.
+
+A chave Edge usada pelo agente local é lida apenas do arquivo `$HOME/.local/share/stt-api/runtime/.env` já instalado com `chmod 600` por `setup_s7_api.py`. A biblioteca standard do Python lê exclusivamente a entrada JSON `STT_EDGE_KEY`; o código recusa arquivos symlink, permissão aberta, tamanho excessivo e segredo inválido. A credencial **nunca** deve ser anexada a chamadas HTTPS públicas. Nenhum segredo é versionado.
+
+### Gate de rollout no operador (não realizado)
+
+1. Confirmar S7 API escutando apenas loopback:8786 e apontando ao SQLite/microSD autoritativos, com `STT_REQUIRE_EDGE=1`. Confirmar `runtime/.env` privado/0600 e chave Edge compatível com o processo API existente, sem imprimir o valor.
+2. Rodar testes de unidade/CI, inspecionar pendências (outbox, running, uploading). **Não reiniciar API/Tunnel ou modificar DNS.**
+3. Aplicar atualização do arquivo de worker e entrypoint runit em janela controlada via `scripts/setup_s7_service.py`; **testar primeiro sem restart**, iniciar somente agente após confirmar que não há trabalho ativo ou outbox pendente. O supervisor pode precisar de reinício explícito do serviço worker; `--start` isolado não garante reload se já ativo.
+4. Comparar contadores por rota/proxy durante 15–30 min: controle e claims do S7 devem atingir **zero** requisições públicas ao Cloudflare Worker, mantendo `/api/health` e upload/download externos normais.
+5. Reverter apenas `s7/worker.py` e `s7/service-run.sh` ao commit anterior em caso de falha; **não reverter o SQLite S7 para Windows** nem expor a origem.
+
+A melhoria no canal local é independente do polling adaptativo ([STT #99](https://github.com/Faysk/stt/issues/99)); a quota compartilhada e os alertas permanecem em [IaC #64](https://github.com/Faysk/iac/issues/64). Resultado físico de produção, reboot e Doze ainda pendentes.
