@@ -6,7 +6,7 @@ try{
  key=localStorage.getItem('stt.session');
 }catch{}
 if(!validSession(key)){key=Array.from(crypto.getRandomValues(new Uint8Array(32)),b=>b.toString(16).padStart(2,'0')).join('');try{localStorage.setItem('stt.session',key)}catch{}}
-let mode='file',selected=null,busy=false,polling=false,jobs=[],health=null,filter='all',renderSignature='',currentTranscript='',readerData=null,readerMode='timeline';
+let mode='file',selected=null,busy=false,polling=false,jobs=[],health=null,failedRefreshes=0,refreshTimer=null,filter='all',renderSignature='',currentTranscript='',readerData=null,readerMode='timeline';
 function message(text,error=false){$('message').textContent=text;$('message').classList.toggle('error',error)}
 function failure(status,detail=''){if(status===413)return health?.limited?limitedLabel():t('large');if(status===429)return detail.includes('cheia')?t('full'):t('rate');if(status>=500)return t('unavailable');if(status===400||status===422)return t(mode==='link'?'invalid':'error');return t('error')}
 async function api(path,options={}){const r=await fetch(path,{...options,headers:{'x-session-key':key,'x-ui-language':locale,...options.headers}});if(!r.ok){const data=await r.json().catch(()=>({}));throw Error(failure(r.status,data.detail))}return r}
@@ -230,8 +230,9 @@ async function refresh(){
    fetch('/api/health').then(r=>{if(!r.ok)throw Error();return r.json()}),
    api('/api/jobs').then(r=>r.json())
   ]);
-  health=h;jobs=list;showHealth();render();
+  health=h;jobs=list;failedRefreshes=0;showHealth();render();
  }catch{
+  failedRefreshes=Math.min(6,failedRefreshes+1);
   $('health').dataset.pressure='offline';$('health-text').textContent=t('unavailable');
   const container=$('jobs');
   if(container.getAttribute('aria-busy')==='true'){
@@ -242,6 +243,24 @@ async function refresh(){
   }
  }finally{polling=false}
 }
+function publicRefreshDelay(){
+ if(document.hidden)return 60000;
+ if(failedRefreshes)return Math.min(120000,5000*2**Math.min(failedRefreshes,5));
+ return jobs.some(j=>['queued','running','uploading'].includes(j.status))?5000:30000;
+}
+function schedulePublicRefresh(){
+ clearTimeout(refreshTimer);
+ const wait=publicRefreshDelay();
+ refreshTimer=setTimeout(async()=>{
+  if(!document.hidden)await refresh();
+  schedulePublicRefresh();
+ },wait);
+}
+document.addEventListener('visibilitychange',()=>{
+ if(document.hidden){schedulePublicRefresh();return}
+ refresh().finally(schedulePublicRefresh);
+});
+
 for(const b of document.querySelectorAll('[data-filter]'))b.onclick=()=>{filter=b.dataset.filter;for(const x of document.querySelectorAll('[data-filter]')){x.classList.toggle('active',x===b);x.setAttribute('aria-pressed',String(x===b))}render()};
 $('search').oninput=render;$('close-preview').onclick=()=>$('preview').close();$('copy').onclick=async()=>{
  const button=$('copy');button.disabled=true;button.classList.add('is-loading');
@@ -250,4 +269,4 @@ $('search').oninput=render;$('close-preview').onclick=()=>$('preview').close();$
  finally{button.disabled=false;button.classList.remove('is-loading')}
 };
 for(const [value,name]of Object.entries(languageNames)){const option=el('option','',name);option.value=value;$('language').append(option)}$('language').value=locale;$('language').onchange=e=>setLanguage(e.target.value);
-document.addEventListener('languagechange',()=>{$('language').value=locale;if(selected)$('file-label').textContent=selected.name;showHealth();render();message('')});for(const b of document.querySelectorAll('[data-reader-mode]'))b.onclick=()=>{readerMode=b.dataset.readerMode;renderReader()};$('preview').addEventListener('close',()=>{readerData=null;currentTranscript='';document.querySelector('[data-reader-mode="timeline"]').disabled=false;$('preview-text').replaceChildren()});applyLanguage();refresh();setInterval(()=>{if(!document.hidden)refresh()},5000);
+document.addEventListener('languagechange',()=>{$('language').value=locale;if(selected)$('file-label').textContent=selected.name;showHealth();render();message('')});for(const b of document.querySelectorAll('[data-reader-mode]'))b.onclick=()=>{readerMode=b.dataset.readerMode;renderReader()};$('preview').addEventListener('close',()=>{readerData=null;currentTranscript='';document.querySelector('[data-reader-mode="timeline"]').disabled=false;$('preview-text').replaceChildren()});applyLanguage();refresh().finally(schedulePublicRefresh);
