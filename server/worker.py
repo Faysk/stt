@@ -470,6 +470,42 @@ def failure_delay(failures):
     return min(120.,10. * (2 ** min(failures,4))) * random.uniform(.9,1.1)
 
 
+class ControlReporter:
+    """Idempotent worker power/ready ACKs without a redundant POST every idle cycle.
+
+    The initial poll never claims to have applied an unknown power state.
+    Later polls carry the last known applied state, allowing the server to
+    refresh worker.seen while still reporting 'stopping' on a new disable.
+    A separate ACK is required on transition or at most every 120 seconds.
+    """
+    def __init__(self, api, identity, clock=time.monotonic, refresh_seconds=120):
+        self.api=api
+        self.identity=identity
+        self.clock=clock
+        self.refresh_seconds=refresh_seconds
+        self.state=None
+        self.last_ack=None
+
+    def control_payload(self):
+        payload={'id':self.identity}
+        if self.state is not None:
+            payload['applied_enabled']=self.state[0]
+        return payload
+
+    def report(self, enabled, ready, reason=None):
+        state=(bool(enabled),bool(ready),reason if not ready else None)
+        now=self.clock()
+        if self.state != state or self.last_ack is None or now-self.last_ack>=self.refresh_seconds:
+            self.api.post('/api/worker/control',json={
+                'id':self.identity,'applied_enabled':state[0],
+                'ready':state[1],'reason':state[2]
+            }).raise_for_status()
+            self.state=state
+            self.last_ack=now
+            return True
+        return False
+
+
 def main():
     print(f'Executor {IDENTITY} conectado a {BASE}',flush=True)
     preload_proc=None
@@ -477,17 +513,18 @@ def main():
     failure_streak=0
     idle_interval=poll_interval('STT_WORKER_IDLE_SECONDS',20)
     disabled_interval=poll_interval('STT_WORKER_DISABLED_SECONDS',30)
+    reporter=ControlReporter(client,IDENTITY)
     try:
         while True:
             try:
-                control=client.post('/api/worker/control',json={'id':IDENTITY})
+                control=client.post('/api/worker/control',json=reporter.control_payload())
                 control.raise_for_status()
                 enabled=control.json().get('enabled') is True
                 if not enabled:
                     _stop_child(preload_proc)
                     preload_proc=None
                     if preload_path:preload_path.unlink(missing_ok=True);preload_path=None
-                    client.post('/api/worker/control',json={'id':IDENTITY,'applied_enabled':False}).raise_for_status()
+                    reporter.report(False,False)
                     _drain_outbox()  # Keep durable results; no new model/claim.
                     failure_streak=0
                     time.sleep(disabled_interval)
@@ -495,13 +532,12 @@ def main():
                 try:
                     workspace.preflight(getenv('STT_TMP') or str(ROOT/'worker-tmp'),OUTBOX)
                 except OSError:
-                    client.post('/api/worker/control',json={'id':IDENTITY,'applied_enabled':True,
-                        'ready':False,'reason':'WORKSPACE_UNAVAILABLE'}).raise_for_status()
+                    reporter.report(True,False,'WORKSPACE_UNAVAILABLE')
                     time.sleep(disabled_interval)
                     continue
-                client.post('/api/worker/control',json={'id':IDENTITY,'applied_enabled':True,
-                    'ready':True,'reason':None}).raise_for_status()
-                if _drain_outbox():
+                pending=_drain_outbox()
+                reporter.report(True,not pending,'OUTBOX_PENDING' if pending else None)
+                if pending:
                     failure_streak=0
                     time.sleep(idle_interval)
                     continue
