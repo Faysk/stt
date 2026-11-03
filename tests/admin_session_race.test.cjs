@@ -42,6 +42,25 @@ async function testOldBodyCannotRenderAfterSessionSwitch(){
  body.resolve({secret:'old body'});
  await assert.rejects(stale,/ADMIN_SESSION_CHANGED/);
 }
+async function testStaleTransportAndBodyFailuresAreIgnored(){
+ const transport=deferred();
+ const ctx=vm.createContext({authEpoch:1,key:'old',sessionMode:false,sessionCsrf:'',
+  fetch:()=>transport.promise,lockAdmin:()=>{}});
+ vm.runInContext(apiCode,ctx);
+ const pending=ctx.api('/api/admin');
+ ctx.authEpoch=2;ctx.key='new';
+ // Promise-based rejection must not show an unrelated error in the new session.
+ transport.resolve(Promise.reject(Error('old network failure')));
+ await assert.rejects(pending,/ADMIN_SESSION_CHANGED/);
+
+ const parse=deferred();
+ ctx.fetch=async()=>({ok:true,status:200,json:()=>parse.promise});
+ const staleJson=ctx.api('/api/admin/jobs');
+ await Promise.resolve();
+ ctx.authEpoch=3;ctx.key='next';
+ parse.resolve(Promise.reject(Error('old JSON parse failure')));
+ await assert.rejects(staleJson,/ADMIN_SESSION_CHANGED/);
+}
 async function testRefreshRunsForNewSessionWithoutOldResponseClobber(){
  const first=deferred(),second=deferred();
  let calls=0,rendered=[],scheduled=0;
@@ -68,6 +87,7 @@ async function testRefreshRunsForNewSessionWithoutOldResponseClobber(){
 (async()=>{
  await testOldFetchCannotRenderOrSignOutNewSession();
  await testOldBodyCannotRenderAfterSessionSwitch();
+ await testStaleTransportAndBodyFailuresAreIgnored();
  await testRefreshRunsForNewSessionWithoutOldResponseClobber();
  for(const marker of [
   'authEpoch++;historyRequestId++;clearTimeout(adminRefreshTimer)',
