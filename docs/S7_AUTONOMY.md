@@ -88,3 +88,13 @@ A chave Edge usada pelo agente local é lida apenas do arquivo `$HOME/.local/sha
 5. Reverter apenas `s7/worker.py` e `s7/service-run.sh` ao commit anterior em caso de falha; **não reverter o SQLite S7 para Windows** nem expor a origem.
 
 A melhoria no canal local é independente do polling adaptativo ([STT #99](https://github.com/Faysk/stt/issues/99)); a quota compartilhada e os alertas permanecem em [IaC #64](https://github.com/Faysk/iac/issues/64). Resultado físico de produção, reboot e Doze ainda pendentes.
+
+## Polling e backoff de agentes — alteração proposta (STT #99, 03/11/2026)
+
+**Não implantado neste documento**: o PR altera os agentes notebook e S7 para consulta ociosa padrão de aproximadamente **20 s** em vez de **5 s**, sem mudar o ritmo dos heartbeats durante inferência. O agente desabilitado do notebook consulta a cada **30 s**. A comunicação co-localizada S7↔API por loopback está em [STT #98](https://github.com/Faysk/stt/issues/98) e é independente.
+
+Parâmetros: `STT_WORKER_IDLE_SECONDS` (notebook, padrão 20), `STT_WORKER_DISABLED_SECONDS` (notebook, padrão 30), `STT_S7_IDLE_SECONDS` (S7, padrão 20). Variáveis são limitadas entre 5 e 60 s e valores inválidos recuam para o padrão. Falhas transitórias recebem retry com backoff exponencial, teto aproximado de 120 s e jitter ±10%; nenhuma credencial ou mensagem HTML da Cloudflare é logada. Atividade de processamento mantém heartbeats no caminho próprio; validar leases e comportamento de cancelamento no E2E.
+
+**Impacto:** ocioso notebook habilitado cai de até 4 requests/5 s para aproximadamente 4/20 s (75% de redução teórica), sem contar jobs, uploads e snapshots da UI. Isto ainda não é medição Cloudflare nem solução isolada da quota; tempo até claim de um job pode subir até ~20 s e deve ser medido antes da publicação. Avaliar long-polling/wake-up num PR futuro se SLA exigir resposta mais rápida.
+
+**Operação:** executar testes, medir p50/p95 de `enqueued→claimed` e quota/dia, validar S7+notebook, jobs longos/outbox/power; publicar cada worker sob janela segura, **sem reiniciar API/Tunnel nem retroceder o banco do S7**. Rollback por versão anterior do agente/variáveis, jamais fail-open no Worker.
