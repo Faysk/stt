@@ -17,6 +17,8 @@ REMOTE = r'''
 import hashlib, json, os, socket, sqlite3, stat, subprocess
 from pathlib import Path
 from urllib.parse import quote
+from urllib.request import Request, ProxyHandler, HTTPRedirectHandler, build_opener
+from urllib.error import HTTPError, URLError
 
 home = Path.home()
 api = home / '.local/share/stt-api/runtime/.env'
@@ -62,6 +64,43 @@ def config_checks():
     except (OSError, UnicodeError):
         pass
     return flags
+
+class NoRedirect(HTTPRedirectHandler):
+    def redirect_request(self, *args, **kwargs):
+        return None
+
+def origin_guard_http():
+    """Confirm security locally, without leaking the edge secret or using Cloudflare."""
+    result = {'origin_no_key_403':False,'origin_private_key_200':False}
+    if not private(api):
+        return result
+    edge_key = None
+    try:
+        for line in api.read_text(encoding='utf-8').splitlines():
+            if line.startswith('STT_EDGE_KEY='):
+                edge_key = json.loads(line.partition('=')[2])
+                break
+    except (OSError,UnicodeError,ValueError):
+        return result
+    if not isinstance(edge_key,str) or len(edge_key)<32 or any(
+        c in edge_key for c in '\\r\\n\\x00'
+    ):
+        return result
+    opener = build_opener(ProxyHandler({}),NoRedirect())
+    url = 'http://127.0.0.1:8786/api/health'
+    def status(headers):
+        request=Request(url,headers=headers,method='GET')
+        try:
+            with opener.open(request,timeout=3) as response:
+                return response.status
+        except HTTPError as exc:
+            return exc.code
+        except (OSError,URLError,ValueError):
+            return None
+    result['origin_no_key_403'] = status({}) == 403
+    # The credential is used strictly on S7 loopback and never printed.
+    result['origin_private_key_200'] = status({'x-edge-key':edge_key}) == 200
+    return result
 
 def queue_counters():
     outcome = {'database_present':False,'on_external_volume':False,
@@ -154,6 +193,7 @@ result = {
         and not (home/'.cache/stt-worker').is_symlink()),
 }
 result.update(config_checks())
+result.update(origin_guard_http())
 result.update(queue_counters())
 print(json.dumps(result,sort_keys=True))
 '''
@@ -167,7 +207,8 @@ def valid_target(host, user):
 
 def assess(report, expected_worker, expected_entry, phase):
     must = ('api_loopback_tcp','api_env_private','scoped_key_private',
-            'edge_secret_present','require_edge_enabled','database_present',
+            'edge_secret_present','require_edge_enabled',
+            'origin_no_key_403','origin_private_key_200','database_present',
             'on_external_volume','queue_checked')
     blockers = [k for k in must if report.get(k) is not True]
     if report.get('jobs_active') is None or report.get('jobs_queued') is None:
