@@ -420,11 +420,11 @@ def main():
                 errors+=1
                 time.sleep(retry_seconds(errors))
                 continue
-            errors=0
             enabled=control.get('enabled') is True
             json_post(cfg,'/api/worker/control',{'id':ID,'applied_enabled':enabled},timeout=20)
             if not enabled:
                 drain(cfg)
+                errors=0
                 time.sleep(idle)
                 continue
         except (OSError,URLError,TimeoutError,ValueError):
