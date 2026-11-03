@@ -41,3 +41,10 @@ Falhas sucessivas do HTTP fazem backoff até 120 s em vez de requisições agres
 **Testes/aceite ainda necessários:** fake timer/DOM em browsers reais, upload/console longos, duas abas, i18n, logout e retoma, diagnóstico de tráfego antes/depois por invocações Worker (não downloads de assets). Revisar latência percebida quando novos jobs forem criados noutras abas e garantir refresh imediato após ações do usuário. A referência de segurança/quotas é [IaC #64](https://github.com/Faysk/iac/issues/64), incidente [STT #97](https://github.com/Faysk/stt/issues/97).
 
 Nenhuma mudança de Cloudflare, Tunnel, DB, Worker de inferência ou sessão autorizada decorre deste PR; rollback é publicar a revisão frontend anterior sob procedimento de release supervisionado.
+
+
+## Timer lifecycle/histórico entre sessões (correção STT #100)
+
+O scheduler público mantém **um único timer futuro** e cancela atualizações ao ocultar a aba; ao voltar a ficar visível, atualiza imediatamente. No admin, o timer **não é mantido** quando não há sessão autenticada ou a página fica oculta. Logout invalida o timer, reseta `lastPeriodLoad`/estado de erro/atividade e limpa dados administrativos anteriores. Um login posterior deve buscar histórico/clientes na primeira atualização, mesmo que a sessão anterior tenha carregado esses dados há menos de 60 segundos.
+
+Os testes de fake timers em `tests/polling_scheduler_lifecycle.test.cjs` garantem ausência de timers duplicados e suspensão sem network enquanto oculto/desconectado. Ainda é necessário testar no browser real (várias abas, sessão Passkey/QR, tempo de espera e estados 1027). Nenhum deploy no Worker Cloudflare ocorre por commit Git.

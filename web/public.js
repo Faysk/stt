@@ -250,10 +250,13 @@ function publicRefreshDelay(){
 }
 function schedulePublicRefresh(){
  clearTimeout(refreshTimer);
+ refreshTimer=null;
+ if(document.hidden)return;
  const wait=publicRefreshDelay();
  refreshTimer=setTimeout(async()=>{
-  if(!document.hidden)await refresh();
-  schedulePublicRefresh();
+  refreshTimer=null;
+  await refresh();
+  if(refreshTimer===null&&!document.hidden)schedulePublicRefresh();
  },wait);
 }
 document.addEventListener('visibilitychange',()=>{
