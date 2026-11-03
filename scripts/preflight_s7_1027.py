@@ -110,11 +110,34 @@ def entrypoint_is_local():
         return False
 
 def outbox_count():
+    """Fail closed on missing/unreadable workspaces and partial result spools.
+
+    atomic_json writes result-<id>.json.<random>.tmp before rename; ignoring
+    those artifacts could incorrectly certify a clean outbox after a crash.
+    """
     try:
-        folders = [home/'.cache/stt-worker',home/'stt-lab/stt-worker']
-        return sum(1 for folder in folders if folder.is_dir()
-                   for candidate in folder.glob('result-*.json') if candidate.is_file())
-    except OSError:
+        primary = home/'.cache/stt-worker'
+        legacy = home/'stt-lab/stt-worker'
+        folders = []
+        for folder in (primary, legacy):
+            if folder.is_symlink():
+                return None
+            if folder.exists():
+                if not folder.is_dir():
+                    return None
+                folders.append(folder)
+        if not folders:
+            return None
+        total = 0
+        for folder in folders:
+            for item in folder.glob('result-*'):
+                if item.is_symlink() or not item.is_file():
+                    return None
+                # Include atomic_json's .json.<random>.tmp and unknown
+                # result-* artifacts instead of assuming they are harmless.
+                total += 1
+        return total
+    except (OSError, PermissionError):
         return None
 
 result = {
@@ -126,6 +149,9 @@ result = {
     'runtime_worker_sha256':digest(worker),
     'runtime_entrypoint_sha256':digest(service),
     'outbox_count':outbox_count(),
+    'primary_workspace_present':(
+        (home/'.cache/stt-worker').is_dir()
+        and not (home/'.cache/stt-worker').is_symlink()),
 }
 result.update(config_checks())
 result.update(queue_counters())
@@ -155,6 +181,9 @@ def assess(report, expected_worker, expected_entry, phase):
         ('runtime_entrypoint_sha256',expected_entry)
     ) if report.get(k) != expected]
     if phase == 'after':
+        # An active installed S7 worker must use its private current workspace.
+        if report.get('primary_workspace_present') is not True:
+            blockers.append('primary_workspace_missing')
         for k in ('worker_entrypoint_local','worker_runit_running'):
             if report.get(k) is not True: blockers.append(k)
         blockers.extend(mismatched)
