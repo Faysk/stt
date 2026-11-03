@@ -107,3 +107,14 @@ $Identity = Join-Path $HOME ".ssh/s7_lmonitor_ed25519"
 - A verificação não prova que a origem externa esteja 403, nem que jobs tenham sido concluídos E2E ou que Cloudflare tenha quota disponível. Esses aceites seguem separadamente no runbook.
 
 **Status:** automatização preparada e testável offline; execução SSH física e release reais pendentes.
+
+
+## Redução adicional de chamadas do executor Windows — STT #99
+
+O notebook remoto mantém a consulta de estado a cada ~20 s, mas agora a requisição já inclui o último estado de energia que foi **efetivamente aplicado** pelo executor. O backend compara `applied_enabled` com a preferência atual: em caso de nova ordem de desligamento, mostra `stopping` e aguarda o ACK após o processo parar. O notebook envia o POST separado de ACK/ready apenas na primeira sincronização, mudança de estado/erro de workspace/outbox ou renovação periódica a cada ~120 s.
+
+O agente não marca `ready=true` enquanto o outbox tem uma entrega pendente; publica `ready=false / OUTBOX_PENDING` como no S7. Falhas de ACK não avançam o estado local de confirmação. O refresh da linha `workers.seen` continua em cada poll de controle, mesmo quando o ACK não é reenviado.
+
+**Redução estimada, não medida:** notebook ocioso com `claim` e `preload-claim` ativos cai de ~4 para ~3 chamadas de API a cada 20 s, com ~1 renovação adicional de estado por 120 s. Comparar invocações reais Cloudflare e aceitação de power on/off, workspace inacessível, preload, lease/outbox antes da homologação.
+
+Nenhum deploy ocorre por merge. O S7 local continua sem invocações públicas por chamadas internas quando a versão instalada e o runit corresponderem à `main`.
