@@ -22,7 +22,10 @@ def local_config(tmp_path, monkeypatch):
 
 def test_local_worker_passes_both_keys_only_to_loopback(tmp_path, monkeypatch):
     local_config(tmp_path, monkeypatch)
-    cfg = w.config_from_environment()
+    # On Windows, POSIX scoped-key file modes are not representable; exercise
+    # the HTTP contract with a fixture config. Linux CI covers config_from_environment.
+    cfg = (w.config_from_environment() if __import__('os').name != 'nt'
+           else {'url':w.LOCAL_API,'key':'s'*64,'edge_key':'e'*64})
     headers = {}
     class Response:
         status = 200
