@@ -31,6 +31,7 @@ CLIENT_USER_AGENT = "Mozilla/5.0"
 MAX_BYTES = 8 * 1024 * 1024
 MAX_SECONDS = 300
 SLEEP_SECONDS = 5
+LOCAL_API = "http://127.0.0.1:8786"
 MIN_INTERNAL_FREE = 2 * 1024**3
 WORKSPACE_BUDGET = 64 * 1024**2
 JOB_RESERVE = 24 * 1024**2
@@ -43,6 +44,27 @@ class NoRedirect(HTTPRedirectHandler):
     def redirect_request(self, *args, **kwargs):
         return None
 
+def local_edge_key():
+    """Read the existing private API .env, not a copy of the Edge secret in code."""
+    path = Path(os.environ.get("STT_S7_LOCAL_API_ENV",
+        str(Path.home() / ".local/share/stt-api/runtime/.env"))).expanduser()
+    if path.is_symlink() or not path.is_file():
+        raise WorkerError("Private API settings missing for loopback worker")
+    metadata = path.stat()
+    if (os.name != 'nt' and metadata.st_mode & 0o077) or metadata.st_size > 65536:
+        raise WorkerError("Private API settings permissions/size invalid")
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if line.startswith("STT_EDGE_KEY="):
+            try:
+                secret = json.loads(line.partition("=")[2])
+            except (ValueError,TypeError):
+                break
+            if isinstance(secret,str) and len(secret) >= 32 and not any(c in secret for c in "\r\n\x00"):
+                return secret
+            break
+    raise WorkerError("Local API edge authentication unavailable")
+
+
 def config_from_environment():
     root = Path(os.environ.get("STT_S7_ROOT", str(Path.home() / "stt-lab" / "whisper.cpp"))).expanduser().resolve()
     work = Path(os.environ.get("STT_S7_WORK", str(Path.home() / "stt-lab" / "stt-worker"))).expanduser().resolve()
@@ -52,6 +74,11 @@ def config_from_environment():
         parts.username or parts.password or parts.query or parts.fragment or parts.path not in ("","/") or not parts.hostname
     ):
         raise WorkerError("STT_URL must be HTTPS or loopback HTTP origin")
+    # Local traffic must preserve both Edge and scoped worker authentication.
+    # The origin API remains bound to loopback; no middleware bypass is added.
+    edge_key = local_edge_key() if parts.scheme == "http" and url == LOCAL_API else None
+    if parts.scheme == "http" and url != LOCAL_API:
+        raise WorkerError("Only the configured S7 loopback API is allowed")
     key_path = Path(os.environ.get("STT_S7_KEY_FILE", str(Path.home() / ".stt-s7-worker-key"))).expanduser()
     if key_path.is_symlink() or not key_path.is_file() or key_path.stat().st_mode & 0o077:
         raise WorkerError("S7 key file missing or permissions too broad; require chmod 600")
@@ -67,7 +94,7 @@ def config_from_environment():
         raise WorkerError("Worker workspace must be private (chmod 700)")
     if work == root or root in work.parents or work in root.parents:
         raise WorkerError("Worker workspace must not contain the model repository")
-    return dict(root=root,work=work,url=url,key=key)
+    return dict(root=root,work=work,url=url,key=key,edge_key=edge_key)
 
 
 def ensure_storage(cfg, reserve=0):
@@ -117,6 +144,11 @@ def call(cfg,path,method,body=None,timeout=30,extra_headers=None):
         raise WorkerError("Invalid API route")
     headers={"x-worker-key":cfg["key"],"accept":"application/json",
              "user-agent":CLIENT_USER_AGENT}
+    if cfg.get("edge_key"):
+        # Never attach the origin credential to requests via the public hostname.
+        if cfg["url"] != LOCAL_API:
+            raise WorkerError("Refusing to send Edge key to a nonlocal endpoint")
+        headers["x-edge-key"] = cfg["edge_key"]
     if body is not None: headers["content-type"]="application/json"
     if extra_headers: headers.update(extra_headers)
     request=Request(cfg["url"]+path,data=body,headers=headers,method=method)
@@ -396,7 +428,7 @@ def run_job(cfg,job):
 
 def main():
     cfg=config_from_environment()
-    print("S7 worker ready (scoped HTTPS; compatible jobs only)",flush=True)
+    print("S7 worker ready (scoped authenticated origin; compatible jobs only)",flush=True)
     storage_blocked=False
     while True:
         try:
