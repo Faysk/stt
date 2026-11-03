@@ -118,3 +118,10 @@ O agente não marca `ready=true` enquanto o outbox tem uma entrega pendente; pub
 **Redução estimada, não medida:** notebook ocioso com `claim` e `preload-claim` ativos cai de ~4 para ~3 chamadas de API a cada 20 s, com ~1 renovação adicional de estado por 120 s. Comparar invocações reais Cloudflare e aceitação de power on/off, workspace inacessível, preload, lease/outbox antes da homologação.
 
 Nenhum deploy ocorre por merge. O S7 local continua sem invocações públicas por chamadas internas quando a versão instalada e o runit corresponderem à `main`.
+
+
+### Resultados parciais e pastas de trabalho (validação estrita)
+
+O preflight considera **não drenado** qualquer ficheiro `result-*` (inclusive `result-<job>.json.<sufixo>.tmp` deixado por uma falha na gravação atómica). Se nenhum diretório de trabalho conhecido existir, a contagem será `null` em vez de **zero**; um symlink ou entrada inesperada também invalida a contagem. Após a instalação da nova versão, `primary_workspace_present` deve confirmar `~/.cache/stt-worker`; uma pasta legada isolada não basta para declarar o rollout concluído. A ferramenta nunca apaga nem repara os artefactos — preservar e investigar antes do restart isolado do worker.
+
+Este gate evita que arquivos de resultado incompletos sejam confundidos com uma outbox limpa; não substitui medição de filas ativas ou testes reais.
