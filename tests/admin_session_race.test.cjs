@@ -10,7 +10,7 @@ const between=(a,b)=>{
 };
 const apiCode=between('async function api(', 'function precision()');
 const refreshCode=between('async function refresh(', 'async function showDetail(');
-const deferred=()=>{let resolve;const promise=new Promise(r=>resolve=r);return {promise,resolve}};
+const deferred=()=>{let resolve,reject;const promise=new Promise((a,b)=>{resolve=a;reject=b});promise.catch(()=>{});return {promise,resolve,reject}};
 const ok=data=>({ok:true,status:200,headers:{get:()=> 'application/json'},json:async()=>data});
 const unauth={ok:false,status:401,headers:{get:()=> 'application/json'},json:async()=>({detail:'no'})};
 
@@ -50,7 +50,7 @@ async function testStaleTransportAndBodyFailuresAreIgnored(){
  const pending=ctx.api('/api/admin');
  ctx.authEpoch=2;ctx.key='new';
  // Promise-based rejection must not show an unrelated error in the new session.
- transport.resolve(Promise.reject(Error('old network failure')));
+ transport.reject(Error('old network failure'));
  await assert.rejects(pending,/ADMIN_SESSION_CHANGED/);
 
  const parse=deferred();
@@ -58,7 +58,7 @@ async function testStaleTransportAndBodyFailuresAreIgnored(){
  const staleJson=ctx.api('/api/admin/jobs');
  await Promise.resolve();
  ctx.authEpoch=3;ctx.key='next';
- parse.resolve(Promise.reject(Error('old JSON parse failure')));
+ parse.reject(Error('old JSON parse failure'));
  await assert.rejects(staleJson,/ADMIN_SESSION_CHANGED/);
 }
 async function testRefreshRunsForNewSessionWithoutOldResponseClobber(){
