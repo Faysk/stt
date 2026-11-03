@@ -2,6 +2,8 @@
 
 > **Operação atual (01/11/2026):** API e dados migraram para o S7. Este roteiro de restart de API Windows descreve a arquitetura anterior. Não o use para devolver a origem à cópia antiga do banco. Consulte [S7_AUTONOMY.md](S7_AUTONOMY.md) e os instaladores isolados do S7; frontend continua com deploy Cloudflare independente.
 
+> **Bloqueio adicional após S7/autonomia (03/11/2026):** o script legado `scripts/publish-stt.ps1 -Apply` falha por padrão com `S7_COORDINATOR_GUARD`, **antes de executar git pull, stop/start ou Wrangler**. Um cenário futuro de reversão só poderá usar esse publicador com `-WindowsCoordinatorConfirmed`, `STT_HOST_API=1` explícito no `.env` e procedimento independente, aprovado, de migração do banco e da autoridade do coordenador. **Não configurar isso para contornar o bloqueio no ambiente atual.** Use [QUOTA_1027_RELEASE.md](QUOTA_1027_RELEASE.md) para S7 e deploy separado da borda Cloudflare.
+
 O git merge apenas atualiza o repositório. O backend e o executor ficam no Windows; o frontend e proxy de API ficam no Cloudflare Worker faysk-stt. GitHub Actions executa testes/dry-run e NÃO tem deploy automático. Esta publicação manual é uma ação explícita do operador.
 
 ## Antes de publicar
