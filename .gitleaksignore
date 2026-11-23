@@ -1,0 +1,7 @@
+# Gitleaks exceptions for two independently reviewed historical synthetic test
+# fixtures in tests/cloudflare_quota_ui.test.cjs:15.
+# Each entry is an exact commit:path:rule:line fingerprint: never suppress
+# the generic-api-key rule or future occurrences in the file.
+# See https://github.com/Faysk/stt/issues/114
+47a0356e50b332712d295569563a4e351c7d5e49:tests/cloudflare_quota_ui.test.cjs:generic-api-key:15
+edacedefd238ec0ecb2a72e1d603b776e1b5d677:tests/cloudflare_quota_ui.test.cjs:generic-api-key:15
