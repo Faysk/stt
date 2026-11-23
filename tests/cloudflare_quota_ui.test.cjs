@@ -12,7 +12,7 @@ const client=source.slice(start,end);
 async function check(response,expected){
  const ctx=vm.createContext({
   fetch:async()=>response,
-  key:'0123456789abcdef'.repeat(4),
+  key:'synthetic-test-session', // fixture identifier, never a credential
   locale:'pt',
   t:key=>({quota:'Limite Cloudflare atingido',unavailable:'Serviço indisponível'})[key]||key,
   failure:(status)=>'Falha HTTP '+status
